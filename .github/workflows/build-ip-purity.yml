@@ -99,6 +99,9 @@ jobs:
             'Commit: ' + $env:GITHUB_SHA
             'Run: ' + $env:GITHUB_RUN_ID
             'Fix: restore IP purity cache and pending checks after page navigation.'
+            'Fix: show failures inline as Timeout; no per-node error toasts.'
+            'UI: purity and latency share readable right-aligned metric controls.'
+            'Scoring: valid zero scores are distinct from failed or missing results.'
             'Build resource: pinned Noto Emoji v2.051 instead of rolling main.'
             'Experimental IP purity build; not a stable upstream release.'
           ) | Set-Content -Path 'dist/BUILD-INFO.txt' -Encoding utf8
