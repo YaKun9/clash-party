@@ -110,9 +110,7 @@ function parseProxyCheck(ip: string, data: unknown): IProxyPurityProviderProxyCh
       ? (obj.detections as Record<string, unknown>)
       : {}
   const network =
-    obj.network && typeof obj.network === 'object'
-      ? (obj.network as Record<string, unknown>)
-      : {}
+    obj.network && typeof obj.network === 'object' ? (obj.network as Record<string, unknown>) : {}
   const location =
     obj.location && typeof obj.location === 'object'
       ? (obj.location as Record<string, unknown>)
@@ -177,8 +175,7 @@ async function discoverExitIp(proxy: string): Promise<string> {
   const current = await getRuntimeConfig()
   const originalListeners = Array.isArray(current.listeners) ? current.listeners : []
   const port = await getFreePort()
-  const listenerName =
-    `__clash_party_ip_purity_${Date.now()}_${Math.random().toString(36).slice(2)}`
+  const listenerName = `__clash_party_ip_purity_${Date.now()}_${Math.random().toString(36).slice(2)}`
 
   const listener = {
     name: listenerName,
@@ -248,9 +245,7 @@ async function queryProviders(
           if (!scamalytics) warnings.push('Scamalytics returned an unsupported response')
         })
         .catch((error: unknown) => {
-          warnings.push(
-            `Scamalytics: ${error instanceof Error ? error.message : 'request failed'}`
-          )
+          warnings.push(`Scamalytics: ${error instanceof Error ? error.message : 'request failed'}`)
         })
     )
   } else {
@@ -282,9 +277,7 @@ async function queryProviders(
           }
         })
         .catch((error: unknown) => {
-          warnings.push(
-            `Scamalytics: ${error instanceof Error ? error.message : 'request failed'}`
-          )
+          warnings.push(`Scamalytics: ${error instanceof Error ? error.message : 'request failed'}`)
         })
     )
   }
@@ -302,9 +295,7 @@ async function queryProviders(
         if (!proxycheck) warnings.push('proxycheck.io returned an unsupported response')
       })
       .catch((error: unknown) => {
-        warnings.push(
-          `proxycheck.io: ${error instanceof Error ? error.message : 'request failed'}`
-        )
+        warnings.push(`proxycheck.io: ${error instanceof Error ? error.message : 'request failed'}`)
       })
   )
 
