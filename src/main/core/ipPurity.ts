@@ -1,8 +1,7 @@
 import axios from 'axios'
-import { createServer } from 'net'
 import { getAppConfig } from '../config'
 import { getAxios } from './mihomoApi'
-import { getRuntimeConfig } from './factory'
+import { ensureIpPurityPort, IP_PURITY_GROUP_NAME } from './ipPurityRuntime'
 
 const EGRESS_IP_URL = 'https://api.ipify.org?format=json'
 const PROXYCHECK_API = 'https://proxycheck.io/v3'
@@ -28,7 +27,7 @@ const ipProviderCache = new Map<
   }
 >()
 
-// Listener changes touch the shared runtime config, so node checks are serialized.
+// Purity checks share one hidden selector/listener, so selection + request are serialized.
 let purityQueue: Promise<void> = Promise.resolve()
 
 function enqueue<T>(task: () => Promise<T>): Promise<T> {
@@ -38,27 +37,6 @@ function enqueue<T>(task: () => Promise<T>): Promise<T> {
     () => undefined
   )
   return run
-}
-
-async function getFreePort(): Promise<number> {
-  return await new Promise<number>((resolve, reject) => {
-    const server = createServer()
-    server.unref()
-    server.once('error', reject)
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address()
-      if (!address || typeof address === 'string') {
-        server.close()
-        reject(new Error('Failed to allocate local port'))
-        return
-      }
-      const port = address.port
-      server.close((error) => {
-        if (error) reject(error)
-        else resolve(port)
-      })
-    })
-  })
 }
 
 function buildScamalyticsUrl(endpoint: string, key: string, ip: string): string {
@@ -172,36 +150,22 @@ function calculatePurityScore(
 
 async function discoverExitIp(proxy: string): Promise<string> {
   const instance = await getAxios()
-  const current = await getRuntimeConfig()
-  const originalListeners = Array.isArray(current.listeners) ? current.listeners : []
-  const port = await getFreePort()
-  const listenerName = `__clash_party_ip_purity_${Date.now()}_${Math.random().toString(36).slice(2)}`
+  const port = await ensureIpPurityPort()
 
-  const listener = {
-    name: listenerName,
-    type: 'mixed',
-    port,
-    listen: '127.0.0.1',
-    proxy,
-    udp: false
-  }
+  await instance.put(`/proxies/${encodeURIComponent(IP_PURITY_GROUP_NAME)}`, { name: proxy })
 
-  await instance.patch('/configs', { listeners: [...originalListeners, listener] })
-  try {
-    const response = await axios.get<{ ip?: string }>(EGRESS_IP_URL, {
-      timeout: 10000,
-      proxy: {
-        protocol: 'http',
-        host: '127.0.0.1',
-        port
-      }
-    })
-    const ip = response.data?.ip?.trim()
-    if (!ip) throw new Error('Failed to resolve node exit IP')
-    return ip
-  } finally {
-    await instance.patch('/configs', { listeners: originalListeners }).catch(() => {})
-  }
+  const response = await axios.get<{ ip?: string }>(EGRESS_IP_URL, {
+    timeout: 10000,
+    proxy: {
+      protocol: 'http',
+      host: '127.0.0.1',
+      port
+    }
+  })
+
+  const ip = response.data?.ip?.trim()
+  if (!ip) throw new Error('Failed to resolve node exit IP')
+  return ip
 }
 
 async function queryProviders(
@@ -243,38 +207,6 @@ async function queryProviders(
         .then((response) => {
           scamalytics = parseScamalytics(response.data)
           if (!scamalytics) warnings.push('Scamalytics returned an unsupported response')
-        })
-        .catch((error: unknown) => {
-          warnings.push(`Scamalytics: ${error instanceof Error ? error.message : 'request failed'}`)
-        })
-    )
-  } else {
-    requests.push(
-      axios
-        .get<string>(`https://scamalytics.com/ip/${encodeURIComponent(ip)}`, {
-          timeout: 10000,
-          responseType: 'text',
-          headers: {
-            'User-Agent':
-              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36',
-            Referer: 'https://scamalytics.com/'
-          }
-        })
-        .then((response) => {
-          const html = response.data
-          const scoreMatch =
-            html.match(/"score"\s*:\s*"?([0-9]{1,3})"?/i) ??
-            html.match(/Fraud Score:\s*<[^>]*>\s*([0-9]{1,3})/i) ??
-            html.match(/Fraud Score:\s*([0-9]{1,3})/i)
-          const riskMatch = html.match(/"risk"\s*:\s*"([^"]+)"/i)
-          if (scoreMatch) {
-            scamalytics = {
-              score: Math.max(0, Math.min(100, Number(scoreMatch[1]))),
-              risk: riskMatch?.[1]
-            }
-          } else {
-            warnings.push('Scamalytics public page did not contain a fraud score')
-          }
         })
         .catch((error: unknown) => {
           warnings.push(`Scamalytics: ${error instanceof Error ? error.message : 'request failed'}`)
