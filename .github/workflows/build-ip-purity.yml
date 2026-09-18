@@ -1,0 +1,80 @@
+name: Build IP Purity (Windows x64)
+
+on:
+  push:
+    branches:
+      - feature/ip-purity
+    paths:
+      - '.github/workflows/build-ip-purity.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-ip-purity-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: Windows x64 test packages
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      npm_config_arch: x64
+      npm_config_target_arch: x64
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: 'pnpm'
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Set development version
+        env:
+          GITHUB_EVENT_NAME: workflow_dispatch
+        run: node scripts/update-version.mjs
+      - name: Prepare runtime resources
+        run: pnpm prepare --x64
+      - name: Build installer and portable archive
+        run: pnpm build:win --x64
+      - name: Add portable mode flag
+        run: |
+          New-Item -Path 'PORTABLE' -ItemType File -Force
+          $archives = @(Get-ChildItem 'dist/*portable.7z')
+          if ($archives.Count -eq 0) { throw 'Portable archive was not produced' }
+          foreach ($archive in $archives) {
+            7z a $archive.FullName PORTABLE
+            if ($LASTEXITCODE -ne 0) { throw 'Failed to add portable mode flag' }
+          }
+      - name: Generate checksums
+        run: pnpm checksum setup.exe portable.7z
+      - name: Record build source
+        run: |
+          @(
+            'Repository: ' + $env:GITHUB_REPOSITORY
+            'Ref: ' + $env:GITHUB_REF_NAME
+            'Commit: ' + $env:GITHUB_SHA
+            'Run: ' + $env:GITHUB_RUN_ID
+            'Experimental IP purity build; not a stable upstream release.'
+          ) | Set-Content -Path 'dist/BUILD-INFO.txt' -Encoding utf8
+      - name: Upload Windows x64 test packages
+        uses: actions/upload-artifact@v6
+        with:
+          name: clash-party-ip-purity-windows-x64
+          path: |
+            dist/*setup.exe
+            dist/*portable.7z
+            dist/*.sha256
+            dist/BUILD-INFO.txt
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
