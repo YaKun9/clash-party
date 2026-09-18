@@ -1,0 +1,331 @@
+name: Build and Release IP Purity Beta 2
+
+on:
+  push:
+    branches:
+      - feature/ip-purity
+    paths:
+      - '.github/workflows/build-release-ip-purity-beta2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ip-purity-beta-2-release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.repository == 'YaKun9/clash-party'
+    name: Build ${{ matrix.platform }} ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows
+            os: windows-latest
+            arch: x64
+          - platform: macos
+            os: macos-14
+            arch: arm64
+          - platform: ubuntu
+            os: ubuntu-24.04
+            arch: x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    env:
+      npm_config_arch: ${{ matrix.arch }}
+      npm_config_target_arch: ${{ matrix.arch }}
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Prepare pinned emoji resource
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import { mkdirSync, writeFileSync } from 'node:fs'
+          import { dirname } from 'node:path'
+          import { createHash } from 'node:crypto'
+          const target = 'src/renderer/src/assets/NotoColorEmoji.ttf'
+          const sources = [
+            'https://raw.githubusercontent.com/googlefonts/noto-emoji/v2.051/fonts/NotoColorEmoji.ttf',
+            'https://cdn.jsdelivr.net/gh/googlefonts/noto-emoji@v2.051/fonts/NotoColorEmoji.ttf'
+          ]
+          let downloaded = false
+          for (const url of sources) {
+            try {
+              const response = await fetch(url, { signal: AbortSignal.timeout(30000) })
+              if (!response.ok) throw new Error(`HTTP ${response.status}`)
+              const bytes = Buffer.from(await response.arrayBuffer())
+              if (bytes.length < 1000000 || bytes.length > 30000000 || bytes.readUInt32BE(0) !== 0x00010000) {
+                throw new Error('Invalid TrueType build resource')
+              }
+              mkdirSync(dirname(target), { recursive: true })
+              writeFileSync(target, bytes)
+              console.log(`Noto Emoji v2.051 SHA256: ${createHash('sha256').update(bytes).digest('hex')}`)
+              downloaded = true
+              break
+            } catch (error) {
+              console.warn(`Resource download failed: ${error.message}`)
+            }
+          }
+          if (!downloaded) throw new Error('All pinned resource sources failed')
+          NODE
+      - name: Linux packaging dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libarchive-tools
+      - name: Install dependencies and runtime resources
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck and regression tests
+        run: |
+          pnpm run typecheck
+          pnpm test
+      - name: Configure experimental package version and macOS signing
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync, writeFileSync } from 'node:fs'
+          import { parse, stringify } from 'yaml'
+          const pkg = JSON.parse(readFileSync('package.json', 'utf8'))
+          pkg.version = '2.0.3-ip-purity.beta.2'
+          writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n')
+          const config = parse(readFileSync('electron-builder.yml', 'utf8'))
+          if (process.platform === 'darwin') {
+            if (process.arch !== 'arm64') throw new Error('macOS ARM64 runner required')
+            config.mac.target = ['pkg']
+            config.mac.identity = '-'
+            config.mac.entitlements = 'build/entitlements.mac.plist'
+            config.mac.entitlementsInherit = 'build/entitlements.mac.plist'
+            config.mac.notarize = false
+            config.pkg.identity = null
+          }
+          if (process.platform === 'linux') {
+            if (process.arch !== 'x64') throw new Error('Ubuntu AMD64 runner required')
+            config.productName = 'clash-party'
+            config.linux.target = ['deb']
+          }
+          writeFileSync('electron-builder.beta2.yml', stringify(config))
+          NODE
+      - name: Build Windows installer and portable archive
+        if: runner.os == 'Windows'
+        run: |
+          pnpm exec electron-vite build
+          pnpm exec electron-builder --publish never --win --x64 --config electron-builder.beta2.yml
+      - name: Add Windows portable mode flag
+        if: runner.os == 'Windows'
+        run: |
+          New-Item -Path 'PORTABLE' -ItemType File -Force
+          $archives = @(Get-ChildItem 'dist/*portable.7z')
+          if ($archives.Count -ne 1) { throw 'Expected one portable archive' }
+          7z a $archives[0].FullName PORTABLE
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to add portable mode flag' }
+      - name: Build macOS Apple Silicon installer
+        if: runner.os == 'macOS'
+        run: |
+          chmod +x build/pkg-scripts/postinstall build/pkg-scripts/preinstall
+          pnpm exec electron-vite build
+          pnpm exec electron-builder --publish never --mac pkg --arm64 --config electron-builder.beta2.yml
+          app=$(find dist -maxdepth 2 -name '*.app' -type d | head -1)
+          test -n "$app"
+          file "$app/Contents/MacOS/Clash Party" | grep arm64
+          codesign --verify --deep --strict "$app"
+      - name: Build Ubuntu AMD64 package
+        if: runner.os == 'Linux'
+        run: |
+          pnpm exec electron-vite build
+          pnpm exec electron-builder --publish never --linux deb --x64 --config electron-builder.beta2.yml
+          package=$(find dist -maxdepth 1 -name '*.deb' | head -1)
+          test -n "$package"
+          test "$(dpkg-deb -f "$package" Architecture)" = amd64
+          dpkg-deb -I "$package"
+      - name: Stage packages and verify target architecture
+        shell: bash
+        env:
+          TARGET_PLATFORM: ${{ matrix.platform }}
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { readdirSync, mkdirSync, readFileSync, writeFileSync, copyFileSync } from 'node:fs'
+          import { createHash } from 'node:crypto'
+          const platform = process.env.TARGET_PLATFORM
+          const arch = process.env.TARGET_ARCH
+          const files = readdirSync('dist').filter((file) => /(?:setup\.exe|portable\.7z|\.pkg|\.deb)$/.test(file))
+          if (files.length !== (platform === 'windows' ? 2 : 1)) throw new Error('Unexpected package count')
+          mkdirSync('release-assets')
+          const sums = []
+          for (const name of files) {
+            if (!name.includes('2.0.3-ip-purity.beta.2') || !name.includes(arch)) throw new Error(`Unexpected package: ${name}`)
+            const sum = createHash('sha256').update(readFileSync(`dist/${name}`)).digest('hex')
+            copyFileSync(`dist/${name}`, `release-assets/${name}`)
+            writeFileSync(`release-assets/${name}.sha256`, sum + '\n')
+            sums.push(`${sum}  ${name}`)
+          }
+          writeFileSync(`release-assets/SHA256SUMS-${platform}-${arch}.txt`, sums.join('\n') + '\n')
+          writeFileSync(`release-assets/BUILD-INFO-${platform}-${arch}.txt`, [
+            `Source: ${process.env.GITHUB_SHA}`,
+            `Run: ${process.env.GITHUB_RUN_ID}`,
+            `Platform: ${platform}; architecture: ${arch}`,
+            'Version: 2.0.3-ip-purity.beta.2; concurrency: 3 isolated selectors/listeners',
+            'Experimental fork, not an upstream release.',
+            'macOS: ad-hoc app signature, unsigned installer, not Apple notarized.'
+          ].join('\n') + '\n')
+          NODE
+      - uses: actions/upload-artifact@v6
+        with:
+          name: ip-purity-beta2-${{ matrix.platform }}-${{ matrix.arch }}
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+  publish:
+    name: Publish three-platform Beta 2
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RELEASE_TAG: ip-purity-v2.0.3-beta.2
+    steps:
+      - name: Verify artifacts and publish new prerelease
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          import pathlib
+          import re
+          import shutil
+          import subprocess
+
+          repo = os.environ['GITHUB_REPOSITORY']
+          source = os.environ['GITHUB_SHA']
+          run_id = os.environ['GITHUB_RUN_ID']
+          tag = os.environ['RELEASE_TAG']
+          if repo != 'YaKun9/clash-party' or os.environ['GITHUB_REF'] != 'refs/heads/feature/ip-purity':
+              raise RuntimeError('Wrong release source')
+
+          def api(path, method=None, data=None):
+              command = ['gh', 'api', path]
+              if method:
+                  command += ['--method', method]
+              if data is not None:
+                  command += ['--input', '-']
+              result = subprocess.run(command, input=json.dumps(data) if data is not None else None, text=True, capture_output=True, check=True)
+              return json.loads(result.stdout)
+
+          names = ['ip-purity-beta2-windows-x64', 'ip-purity-beta2-macos-arm64', 'ip-purity-beta2-ubuntu-x64']
+          artifacts = api(f'repos/{repo}/actions/runs/{run_id}/artifacts?per_page=100')['artifacts']
+          for name in names:
+              matches = [item for item in artifacts if item['name'] == name and not item['expired']]
+              if len(matches) != 1 or matches[0]['workflow_run']['head_sha'] != source:
+                  raise RuntimeError(f'Invalid build artifact: {name}')
+          command = ['gh', 'run', 'download', run_id, '--repo', repo, '--dir', 'downloaded']
+          for name in names:
+              command += ['--name', name]
+          subprocess.run(command, check=True)
+          staging = pathlib.Path('release-assets')
+          staging.mkdir()
+          for path in pathlib.Path('downloaded').rglob('*'):
+              if not path.is_file():
+                  continue
+              if path.is_symlink() or not re.fullmatch(r'[A-Za-z0-9._-]+', path.name):
+                  raise RuntimeError('Unexpected artifact path')
+              target = staging / path.name
+              if target.exists():
+                  raise RuntimeError(f'Duplicate package name: {path.name}')
+              shutil.copyfile(path, target)
+
+          def digest(path):
+              with path.open('rb') as stream:
+                  return hashlib.file_digest(stream, 'sha256').hexdigest()
+
+          packages = [path for path in staging.iterdir() if path.name.endswith(('.exe', '.7z', '.pkg', '.deb'))]
+          if len(packages) != 4 or {path.suffix for path in packages} != {'.exe', '.7z', '.pkg', '.deb'}:
+              raise RuntimeError('Expected Windows installer/portable, macOS PKG, Ubuntu DEB')
+          for path in packages:
+              expected = pathlib.Path(str(path) + '.sha256').read_text().strip()
+              if digest(path) != expected:
+                  raise RuntimeError(f'Checksum mismatch: {path.name}')
+          infos = list(staging.glob('BUILD-INFO-*.txt'))
+          if len(infos) != 3 or any(source not in path.read_text() for path in infos):
+              raise RuntimeError('Build source mismatch')
+          notes = f'''## IP 纯净度测试版 Beta 2
+
+          ### 平台
+          - Windows x64：安装版 `setup.exe` 和便携版 `portable.7z`。
+          - macOS Apple Silicon：`arm64.pkg`，用于苹果芯片 Mac。
+          - Ubuntu x64 / AMD64：`x64.deb`，供联想拯救者 R720 等 Intel/AMD 64 位电脑使用；构建和测试环境为 Ubuntu 24.04。
+
+          ### 本次更新
+          - 同时检测最多 3 个节点，每个任务独占自己的隐藏选择组和本地监听端口；不会修改正常使用的代理组选择。
+          - 批量任务统一排队，避免跨组检测突破并发上限。
+          - 相同出口 IP 的并发查询共享请求，减少重复 API 消耗。
+          - 保留切页缓存、行内失败提示、延迟旁的大字号显示；评分公式没有改变。
+
+          ### 安装与限制
+          - Ubuntu 下载 `.deb` 后执行 `sudo apt install ./下载的文件.deb`；依赖由 apt 安装。
+          - macOS 使用 ad-hoc 应用签名，安装包未使用 Developer ID 签名、未公证。首次安装或运行可能被 Gatekeeper 提示；仅在确认来源后通过“系统设置 → 隐私与安全性”允许。没有使用上游的签名身份。
+          - Windows 便携包保留 `PORTABLE` 文件，运行前退出原客户端；安装版升级前备份配置。
+          - Scamalytics 需要自行配置 API；并发不增加免费额度，限流仍可能导致检测失败。
+          - 检测结果仅在本次运行的内存中保留，完全退出后清空；配置和 API Key 随 WebDAV 备份，备份 ZIP 未额外加密。
+          - 这是本 fork 的实验性版本，不是上游正式版。“净XX”不是安全概率。
+
+          源码提交：`{source}`。三平台使用同一提交、同一版本号，构建前运行类型检查和单元测试。
+          [构建记录](https://github.com/{repo}/actions/runs/{run_id})。各安装包附带 SHA-256 校验文件。
+          '''
+          releases = api(f'repos/{repo}/releases?per_page=100')
+          matches = [release for release in releases if release['tag_name'] == tag]
+          if matches:
+              release = matches[0]
+              if not release['draft'] or release['target_commitish'] != source:
+                  raise RuntimeError('Refusing to overwrite an existing release or move its source')
+          else:
+              release = api(f'repos/{repo}/releases', 'POST', {
+                  'tag_name': tag, 'target_commitish': source,
+                  'name': 'Clash Party IP 纯净度 Beta 2：并发检测 / Windows / macOS / Ubuntu',
+                  'body': notes, 'draft': True, 'prerelease': True, 'make_latest': 'false'
+              })
+          release_id = release['id']
+          assets = {asset['name']: asset for asset in api(f'repos/{repo}/releases/{release_id}')['assets']}
+          for path in sorted(staging.iterdir()):
+              if path.name in assets:
+                  if assets[path.name].get('digest') != 'sha256:' + digest(path):
+                      raise RuntimeError(f'Existing draft asset differs: {path.name}')
+                  continue
+              subprocess.run(['gh', 'api', '--method', 'POST',
+                  f'https://uploads.github.com/repos/{repo}/releases/{release_id}/assets?name={path.name}',
+                  '-H', 'Content-Type: application/octet-stream', '--input', str(path)], check=True, stdout=subprocess.DEVNULL)
+          uploaded = api(f'repos/{repo}/releases/{release_id}')['assets']
+          if {asset['name'] for asset in uploaded} != {path.name for path in staging.iterdir()}:
+              raise RuntimeError('Incomplete release assets')
+          for asset in uploaded:
+              path = staging / asset['name']
+              if asset['state'] != 'uploaded' or asset['size'] != path.stat().st_size:
+                  raise RuntimeError('Incomplete upload')
+              if asset.get('digest') and asset['digest'] != 'sha256:' + digest(path):
+                  raise RuntimeError('Uploaded checksum mismatch')
+          release = api(f'repos/{repo}/releases/{release_id}', 'PATCH', {
+              'draft': False, 'prerelease': True, 'make_latest': 'false', 'body': notes
+          })
+          if release['draft']:
+              raise RuntimeError('Release was not published')
+          print(release['html_url'])
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              summary.write(f"## Published Beta 2\n\n{release['html_url']}\n")
+          PY
