@@ -287,14 +287,14 @@ const Proxies: React.FC = () => {
 
   const onGroupPurity = useCallback(
     async (index: number): Promise<void> => {
-      const proxies = allProxies[index] ?? []
+      const proxies = groups[index]?.all ?? []
       for (const proxy of proxies) {
         if (!('all' in proxy)) {
           await onProxyPurity(proxy)
         }
       }
     },
-    [allProxies, onProxyPurity]
+    [groups, onProxyPurity]
   )
 
   // 组测速时逐节点写回会造成 O(N²) 分配与 N 次 allProxies 重算
@@ -594,7 +594,7 @@ const Proxies: React.FC = () => {
                     <Button
                       title={t('proxies.purity.checkGroup')}
                       variant="light"
-                      isLoading={(allProxies[index] ?? []).some((proxy) =>
+                      isLoading={(groups[index]?.all ?? []).some((proxy) =>
                         purityChecking.has(proxy.name)
                       )}
                       size="sm"
