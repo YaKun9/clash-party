@@ -59,6 +59,20 @@ jobs:
                   raise RuntimeError(result.stderr)
               return json.loads(result.stdout)
 
+          def find_release():
+              # The tag endpoint only resolves published releases; drafts need their ID.
+              page = 1
+              while True:
+                  releases = api(f'repos/{repo}/releases?per_page=100&page={page}')
+                  matches = [release for release in releases if release['tag_name'] == tag]
+                  if len(matches) > 1:
+                      raise RuntimeError('Multiple drafts found for the release tag')
+                  if matches:
+                      return api(f"repos/{repo}/releases/{matches[0]['id']}")
+                  if len(releases) < 100:
+                      return None
+                  page += 1
+
           for run_id, workflow_path in (
               (build_id, '.github/workflows/build-ip-purity.yml'),
               (ci_id, '.github/workflows/ci.yml'),
@@ -72,7 +86,7 @@ jobs:
           ref = api(f'repos/{repo}/git/ref/tags/{tag}', missing_ok=True)
           if ref and (ref['object']['type'] != 'commit' or ref['object']['sha'] != source):
               raise RuntimeError('Existing tag does not point to the reviewed build; refusing to move it')
-          existing = api(f'repos/{repo}/releases/tags/{tag}', missing_ok=True)
+          existing = find_release()
           if existing and (not existing['draft'] or existing['target_commitish'] != source):
               raise RuntimeError('Release already published or targets another commit; refusing to replace it')
 
@@ -154,7 +168,7 @@ jobs:
           - “净XX”是客户端的实验性反向风险评分，不是官方纯净度或安全概率；请结合悬浮详情中的原始分数判断。被识别为 Proxy 可导致“净0”，不等同于存在攻击记录。
           - 结果缓存仅保存在主进程内存中，默认有效期 24 小时；完全退出后不保留，检测结果不会随 WebDAV 备份同步。
           - 设置及 API Key 保存在 `config.yaml`，备份 ZIP 未额外加密，请勿公开分享。
-          - 这是未签名的测试构建；真实节点和服务 API 仍需使用者验证。包内版本号保留原构建的 dev 编号。
+          - 这是未签名的测试构建；真实节点和服务 API 仍需使用者验证。安装包版本号沿用原构建的 2.0.3，测试版以本 Release 标签区分。
 
           ### 构建来源
           - 源码提交：`{source}`
@@ -177,9 +191,10 @@ jobs:
                   '--notes-file', str(notes_file), '--prerelease', '--latest=false',
               ], check=True)
 
-          draft = api(f'repos/{repo}/releases/tags/{tag}')
-          if not draft['draft'] or draft['target_commitish'] != source:
+          draft = find_release()
+          if not draft or not draft['draft'] or draft['target_commitish'] != source:
               raise RuntimeError('Unexpected release state before upload')
+          release_id = draft['id']
           existing_assets = {asset['name']: asset for asset in draft['assets']}
           local_assets = sorted(staging.iterdir())
           if set(existing_assets) - {path.name for path in local_assets}:
@@ -192,7 +207,7 @@ jobs:
               else:
                   subprocess.run(['gh', 'release', 'upload', tag, str(path), '--repo', repo], check=True)
 
-          draft = api(f'repos/{repo}/releases/tags/{tag}')
+          draft = api(f'repos/{repo}/releases/{release_id}')
           uploaded = {asset['name']: asset for asset in draft['assets']}
           if set(uploaded) != {path.name for path in local_assets}:
               raise RuntimeError('Release asset list is incomplete')
@@ -207,7 +222,7 @@ jobs:
               'gh', 'release', 'edit', tag, '--repo', repo, '--draft=false',
               '--prerelease', '--latest=false',
           ], check=True)
-          published = api(f'repos/{repo}/releases/tags/{tag}')
+          published = api(f'repos/{repo}/releases/{release_id}')
           if published['draft'] or not published['prerelease']:
               raise RuntimeError('Release was not published as a prerelease')
           print(published['html_url'])
