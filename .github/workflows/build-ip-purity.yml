@@ -36,14 +36,40 @@ jobs:
         with:
           node-version: 22
           cache: 'pnpm'
-      - name: Use canonical font download URL
+      - name: Download pinned emoji build resource
         run: |
-          $path = Join-Path $PWD 'scripts/prepare.mjs'
-          $content = [System.IO.File]::ReadAllText($path)
-          $old = 'https://github.com/googlefonts/noto-emoji/raw/main/fonts/NotoColorEmoji.ttf'
-          $new = 'https://raw.githubusercontent.com/googlefonts/noto-emoji/main/fonts/NotoColorEmoji.ttf'
-          if (-not $content.Contains($old)) { throw 'Expected font download URL was not found' }
-          [System.IO.File]::WriteAllText($path, $content.Replace($old, $new))
+          @'
+          import { mkdirSync, writeFileSync } from 'node:fs'
+          import { dirname } from 'node:path'
+          import { createHash } from 'node:crypto'
+          const target = 'src/renderer/src/assets/NotoColorEmoji.ttf'
+          const sources = [
+            'https://raw.githubusercontent.com/googlefonts/noto-emoji/v2.051/fonts/NotoColorEmoji.ttf',
+            'https://cdn.jsdelivr.net/gh/googlefonts/noto-emoji@v2.051/fonts/NotoColorEmoji.ttf'
+          ]
+          let downloaded = false
+          for (const url of sources) {
+            try {
+              const response = await fetch(url, { signal: AbortSignal.timeout(30000) })
+              if (!response.ok) throw new Error(`HTTP ${response.status}`)
+              const bytes = Buffer.from(await response.arrayBuffer())
+              if (bytes.length < 1000000 || bytes.length > 30000000 || bytes.readUInt32BE(0) !== 0x00010000) {
+                throw new Error('Download is not the expected TrueType font')
+              }
+              mkdirSync(dirname(target), { recursive: true })
+              writeFileSync(target, bytes)
+              const hash = createHash('sha256').update(bytes).digest('hex')
+              writeFileSync('FONT-SOURCE.txt', `Noto Emoji v2.051: ${url}\nSHA256: ${hash}\n`)
+              console.log(`Downloaded Noto Emoji v2.051 (${bytes.length} bytes; SHA256 ${hash})`)
+              downloaded = true
+              break
+            } catch (error) {
+              console.warn(`Font source failed (${url}): ${error.message}`)
+            }
+          }
+          if (!downloaded) throw new Error('All pinned font sources failed')
+          '@ | node --input-type=module
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to prepare emoji resource' }
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Set development version
@@ -72,9 +98,10 @@ jobs:
             'Ref: ' + $env:GITHUB_REF_NAME
             'Commit: ' + $env:GITHUB_SHA
             'Run: ' + $env:GITHUB_RUN_ID
-            'Build-only change: use the canonical raw URL for Noto Emoji.'
+            'Build resource: pinned Noto Emoji v2.051 instead of rolling main.'
             'Experimental IP purity build; not a stable upstream release.'
           ) | Set-Content -Path 'dist/BUILD-INFO.txt' -Encoding utf8
+          Get-Content 'FONT-SOURCE.txt' | Add-Content 'dist/BUILD-INFO.txt'
       - name: Upload Windows x64 test packages
         uses: actions/upload-artifact@v6
         with:
