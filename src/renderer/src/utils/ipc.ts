@@ -43,6 +43,7 @@ interface IpcApi {
   patchMihomoConfig: (patch: Partial<IMihomoConfig>) => Promise<void>
   mihomoSmartGroupWeights: (groupName: string) => Promise<Record<string, number>>
   mihomoSmartFlushCache: (configName?: string) => Promise<void>
+  mihomoProxyPurity: (proxy: string) => Promise<IProxyPurityResult>
   queryTrafficUsageOverview: (
     type: TrafficUsageDimension,
     startTime: number,
@@ -194,6 +195,7 @@ interface IpcApi {
   exportGistAgeSecretKey: () => Promise<boolean>
   fetchIPInfo: (url: string) => Promise<unknown>
   measureLatency: (url: string) => Promise<number | null>
+  clearProxyPurityCache: () => Promise<void>
   getImageDataURL: (url: string) => Promise<string>
   relaunchApp: () => Promise<void>
   quitApp: () => Promise<void>
@@ -231,6 +233,7 @@ export const {
   patchMihomoConfig,
   mihomoSmartGroupWeights,
   mihomoSmartFlushCache,
+  mihomoProxyPurity,
   queryTrafficUsageOverview,
   queryTrafficUsageBreakdown,
   importTrafficUsage,
@@ -369,6 +372,7 @@ export const {
   exportGistAgeSecretKey,
   fetchIPInfo,
   measureLatency,
+  clearProxyPurityCache,
   getImageDataURL,
   relaunchApp,
   quitApp
