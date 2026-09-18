@@ -156,7 +156,8 @@ const Proxies: React.FC = () => {
     proxyDisplayOrder = 'default',
     autoCloseConnection = true,
     proxyCols = 'auto',
-    delayTestConcurrency = 50
+    delayTestConcurrency = 50,
+    ipPurityEnabled = true
   } = appConfig || {}
 
   const [cols, setCols] = useState(1)
@@ -591,20 +592,22 @@ const Proxies: React.FC = () => {
                     >
                       <FaLocationCrosshairs className="text-lg text-foreground-500" />
                     </Button>
-                    <Button
-                      title={t('proxies.purity.checkGroup')}
-                      variant="light"
-                      isLoading={(groups[index]?.all ?? []).some((proxy) =>
-                        purityChecking.has(proxy.name)
-                      )}
-                      size="sm"
-                      isIconOnly
-                      onPress={() => {
-                        void onGroupPurity(index)
-                      }}
-                    >
-                      <MdOutlineSecurity className="text-lg text-foreground-500" />
-                    </Button>
+                    {ipPurityEnabled && (
+                      <Button
+                        title={t('proxies.purity.checkGroup')}
+                        variant="light"
+                        isLoading={(groups[index]?.all ?? []).some((proxy) =>
+                          purityChecking.has(proxy.name)
+                        )}
+                        size="sm"
+                        isIconOnly
+                        onPress={() => {
+                          void onGroupPurity(index)
+                        }}
+                      >
+                        <MdOutlineSecurity className="text-lg text-foreground-500" />
+                      </Button>
+                    )}
                     <Button
                       title={t('proxies.delay.test')}
                       variant="light"
@@ -645,7 +648,8 @@ const Proxies: React.FC = () => {
       virtuosoRef,
       onGroupDelay,
       onGroupPurity,
-      purityChecking
+      purityChecking,
+      ipPurityEnabled
     ]
   )
 
@@ -686,9 +690,13 @@ const Proxies: React.FC = () => {
                 purityChecking={purityChecking.has(
                   allProxies[groupIndex][innerIndex * cols + i].name
                 )}
-                onPurity={(proxy) => {
-                  void onProxyPurity(proxy)
-                }}
+                onPurity={
+                  ipPurityEnabled
+                    ? (proxy) => {
+                        void onProxyPurity(proxy)
+                      }
+                    : undefined
+                }
               />
             )
           })}
@@ -710,7 +718,8 @@ const Proxies: React.FC = () => {
       onChangeProxy,
       purityResults,
       purityChecking,
-      onProxyPurity
+      onProxyPurity,
+      ipPurityEnabled
     ]
   )
 
