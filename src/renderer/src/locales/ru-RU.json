@@ -883,5 +883,16 @@
   "proxies.purity.clickToCheck": "Проверить чистоту IP",
   "proxies.purity.ip": "Выходной IP",
   "proxies.purity.score": "Оценка чистоты",
-  "proxies.purity.checkGroup": "Проверить чистоту IP группы"
+  "proxies.purity.checkGroup": "Проверить чистоту IP группы",
+  "mihomo.ipPurity.enabled": "Проверка чистоты IP",
+  "mihomo.ipPurity.proxycheckKey": "API-ключ proxycheck.io",
+  "mihomo.ipPurity.proxycheckKeyPlaceholder": "Необязательно; без ключа используется анонимный лимит",
+  "mihomo.ipPurity.scamalyticsEndpoint": "API Scamalytics",
+  "mihomo.ipPurity.scamalyticsEndpointPlaceholder": "Необязательно; без адреса используется публичная страница. {ip} / {key}",
+  "mihomo.ipPurity.scamalyticsKey": "API-ключ Scamalytics",
+  "mihomo.ipPurity.scamalyticsKeyPlaceholder": "Для пользовательского API Scamalytics",
+  "mihomo.ipPurity.cacheHours": "Кэш чистоты IP",
+  "mihomo.ipPurity.hours": "ч.",
+  "mihomo.ipPurity.clearCache": "Очистить кэш",
+  "mihomo.ipPurity.cacheCleared": "Кэш чистоты IP очищен"
 }
