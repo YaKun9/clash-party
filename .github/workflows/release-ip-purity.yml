@@ -1,0 +1,219 @@
+name: Publish IP Purity Beta 1
+
+on:
+  push:
+    branches:
+      - feature/ip-purity
+    paths:
+      - '.github/workflows/release-ip-purity.yml'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: release-ip-purity-beta-1
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish verified Windows x64 packages
+    if: github.repository == 'YaKun9/clash-party'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      SOURCE_SHA: f0a4efaaef8775a97178dfac3578daf3868fa8f7
+      BUILD_RUN_ID: '35328018049'
+      CI_RUN_ID: '35328022344'
+      RELEASE_TAG: ip-purity-v2.0.3-beta.1
+    steps:
+      - name: Verify, download and publish existing build
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          import pathlib
+          import re
+          import shutil
+          import subprocess
+
+          repo = os.environ['GITHUB_REPOSITORY']
+          source = os.environ['SOURCE_SHA']
+          build_id = os.environ['BUILD_RUN_ID']
+          ci_id = os.environ['CI_RUN_ID']
+          tag = os.environ['RELEASE_TAG']
+          if repo != 'YaKun9/clash-party' or os.environ['GITHUB_REF'] != 'refs/heads/feature/ip-purity':
+              raise RuntimeError('This release is restricted to the reviewed fork and feature branch')
+
+          def api(endpoint, missing_ok=False):
+              result = subprocess.run(['gh', 'api', endpoint], capture_output=True, text=True)
+              if result.returncode:
+                  if missing_ok and 'HTTP 404' in result.stderr:
+                      return None
+                  raise RuntimeError(result.stderr)
+              return json.loads(result.stdout)
+
+          for run_id, workflow_path in (
+              (build_id, '.github/workflows/build-ip-purity.yml'),
+              (ci_id, '.github/workflows/ci.yml'),
+          ):
+              run = api(f'repos/{repo}/actions/runs/{run_id}')
+              if (run['status'] != 'completed' or run['conclusion'] != 'success'
+                      or run['head_sha'] != source or run['head_branch'] != 'feature/ip-purity'
+                      or run['path'] != workflow_path or run['head_repository']['full_name'] != repo):
+                  raise RuntimeError(f'Unverified source workflow: {run_id}')
+
+          ref = api(f'repos/{repo}/git/ref/tags/{tag}', missing_ok=True)
+          if ref and (ref['object']['type'] != 'commit' or ref['object']['sha'] != source):
+              raise RuntimeError('Existing tag does not point to the reviewed build; refusing to move it')
+          existing = api(f'repos/{repo}/releases/tags/{tag}', missing_ok=True)
+          if existing and (not existing['draft'] or existing['target_commitish'] != source):
+              raise RuntimeError('Release already published or targets another commit; refusing to replace it')
+
+          expected_artifacts = {
+              'clash-party-ip-purity-windows-x64-installer': 10540028454,
+              'clash-party-ip-purity-windows-x64-portable': 10539543959,
+          }
+          artifacts = api(f'repos/{repo}/actions/runs/{build_id}/artifacts?per_page=100')['artifacts']
+          for name, artifact_id in expected_artifacts.items():
+              matches = [a for a in artifacts if a['name'] == name and a['id'] == artifact_id]
+              if len(matches) != 1 or matches[0]['expired'] or matches[0]['workflow_run']['head_sha'] != source:
+                  raise RuntimeError(f'Expected build artifact is missing or invalid: {name}')
+
+          download_command = ['gh', 'run', 'download', build_id, '--repo', repo, '--dir', 'downloaded']
+          for name in expected_artifacts:
+              download_command.extend(['--name', name])
+          subprocess.run(download_command, check=True)
+
+          def digest(path):
+              with path.open('rb') as stream:
+                  return hashlib.file_digest(stream, 'sha256').hexdigest()
+
+          staging = pathlib.Path('release-assets')
+          staging.mkdir()
+          # Do not run any downloaded executable or repository script with the release token.
+          for path in pathlib.Path('downloaded').rglob('*'):
+              if not path.is_file():
+                  continue
+              if path.is_symlink():
+                  raise RuntimeError('Artifact contains an unexpected symbolic link')
+              if path.name != 'BUILD-INFO.txt' and not re.fullmatch(
+                  r'clash-party-windows-[0-9A-Za-z.+_-]+-x64-(?:setup\.exe|portable\.7z)(?:\.sha256)?',
+                  path.name,
+              ):
+                  raise RuntimeError(f'Unexpected file in artifact: {path.name}')
+              target = staging / path.name
+              if target.exists():
+                  if digest(target) != digest(path):
+                      raise RuntimeError(f'Conflicting duplicate artifact file: {path.name}')
+              else:
+                  shutil.copyfile(path, target)
+
+          installers = list(staging.glob('*-x64-setup.exe'))
+          portables = list(staging.glob('*-x64-portable.7z'))
+          if len(installers) != 1 or len(portables) != 1:
+              raise RuntimeError('Expected exactly one installer and one portable archive')
+          info = staging / 'BUILD-INFO.txt'
+          if not info.exists() or source not in info.read_text(encoding='utf-8-sig'):
+              raise RuntimeError('Build provenance does not contain the reviewed source commit')
+          sums = []
+          for package in installers + portables:
+              checksum_file = pathlib.Path(str(package) + '.sha256')
+              expected = checksum_file.read_text(encoding='utf-8-sig').strip().lower()
+              actual = digest(package)
+              if not re.fullmatch(r'[0-9a-f]{64}', expected) or expected != actual:
+                  raise RuntimeError(f'Build checksum mismatch: {package.name}')
+              sums.append(f'{actual}  {package.name}')
+              print(f'Verified {package.name} ({package.stat().st_size} bytes): {actual}')
+          (staging / 'SHA256SUMS.txt').write_text('\n'.join(sums) + '\n', encoding='utf-8')
+
+          notes = f'''## Clash Party IP 纯净度测试版 Beta 1
+
+          基于本 fork 的 `feature/ip-purity` 分支，仅提供 Windows x64。属于功能测试版，不是上游正式版本；`smart_core` 未合并、未修改。
+
+          ### 下载
+          - **便携版（建议用于测试）**：`{portables[0].name}`，解压到新目录后运行，保留 `PORTABLE` 文件；运行前退出原客户端。
+          - **安装版**：`{installers[0].name}`，安装前备份现有配置。
+          - 每个安装包附带 `.sha256`，并提供 `SHA256SUMS.txt` 和 `BUILD-INFO.txt`。
+
+          ### 本版功能与修复
+          - 在节点右侧、延迟旁显示 IP 纯净度，字号和延迟一致；支持单节点及代理组批量检测。
+          - 接入 proxycheck.io；配置 Scamalytics API 地址及凭据后可使用第二数据源，不抓取公共查询网页。
+          - 切换页面后恢复检测结果、进行中状态和失败标记。
+          - 检测失败直接显示红色“超时”，不逐节点弹出错误提示，可点击重试。
+          - 有效的 0 分与缺失、非法数据及网络失败分开处理。
+          - 支持 API 配置、缓存时长和清除缓存；配置随客户端 WebDAV 备份与恢复。
+
+          ### 已知限制
+          - “净XX”是客户端的实验性反向风险评分，不是官方纯净度或安全概率；请结合悬浮详情中的原始分数判断。被识别为 Proxy 可导致“净0”，不等同于存在攻击记录。
+          - 结果缓存仅保存在主进程内存中，默认有效期 24 小时；完全退出后不保留，检测结果不会随 WebDAV 备份同步。
+          - 设置及 API Key 保存在 `config.yaml`，备份 ZIP 未额外加密，请勿公开分享。
+          - 这是未签名的测试构建；真实节点和服务 API 仍需使用者验证。包内版本号保留原构建的 dev 编号。
+
+          ### 构建来源
+          - 源码提交：`{source}`
+          - [已通过的 CI](https://github.com/{repo}/actions/runs/{ci_id})
+          - [已通过的 Windows Build #5](https://github.com/{repo}/actions/runs/{build_id})
+          - 本次直接发布原构建产物，未重新编译；发布前校验了安装包和便携包 SHA-256。
+          '''
+          notes_file = pathlib.Path('release-notes.md')
+          notes_file.write_text(notes, encoding='utf-8')
+          title = 'Clash Party IP 纯净度测试版 Beta 1 (Windows x64)'
+          if not existing:
+              subprocess.run([
+                  'gh', 'release', 'create', tag, '--repo', repo, '--target', source,
+                  '--title', title, '--notes-file', str(notes_file),
+                  '--draft', '--prerelease', '--latest=false',
+              ], check=True)
+          else:
+              subprocess.run([
+                  'gh', 'release', 'edit', tag, '--repo', repo, '--title', title,
+                  '--notes-file', str(notes_file), '--prerelease', '--latest=false',
+              ], check=True)
+
+          draft = api(f'repos/{repo}/releases/tags/{tag}')
+          if not draft['draft'] or draft['target_commitish'] != source:
+              raise RuntimeError('Unexpected release state before upload')
+          existing_assets = {asset['name']: asset for asset in draft['assets']}
+          local_assets = sorted(staging.iterdir())
+          if set(existing_assets) - {path.name for path in local_assets}:
+              raise RuntimeError('Existing draft contains unexpected assets; refusing to alter it')
+          for path in local_assets:
+              asset = existing_assets.get(path.name)
+              if asset:
+                  if asset.get('digest') != 'sha256:' + digest(path) or asset['size'] != path.stat().st_size:
+                      raise RuntimeError(f'Existing draft asset differs: {path.name}')
+              else:
+                  subprocess.run(['gh', 'release', 'upload', tag, str(path), '--repo', repo], check=True)
+
+          draft = api(f'repos/{repo}/releases/tags/{tag}')
+          uploaded = {asset['name']: asset for asset in draft['assets']}
+          if set(uploaded) != {path.name for path in local_assets}:
+              raise RuntimeError('Release asset list is incomplete')
+          for path in local_assets:
+              asset = uploaded[path.name]
+              if asset['state'] != 'uploaded' or asset['size'] != path.stat().st_size:
+                  raise RuntimeError(f'Incomplete release asset: {path.name}')
+              if asset.get('digest') and asset['digest'] != 'sha256:' + digest(path):
+                  raise RuntimeError(f'Release asset checksum mismatch: {path.name}')
+
+          subprocess.run([
+              'gh', 'release', 'edit', tag, '--repo', repo, '--draft=false',
+              '--prerelease', '--latest=false',
+          ], check=True)
+          published = api(f'repos/{repo}/releases/tags/{tag}')
+          if published['draft'] or not published['prerelease']:
+              raise RuntimeError('Release was not published as a prerelease')
+          print(published['html_url'])
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as summary:
+              summary.write(f"## Published\n\n[{title}]({published['html_url']})\n\n")
+              summary.write(f'Source: `{source}`; verified build: `{build_id}`\n\n')
+              for asset in published['assets']:
+                  summary.write(f"- [{asset['name']}]({asset['browser_download_url']}) ({asset['size']} bytes)\n")
+          PY
