@@ -877,5 +877,11 @@
     "previewFailed": "Недействительный файл плагина",
     "outdatedFile": "Формат файла плагина устарел; получите новый у провайдера",
     "fileTooLarge": "Файл плагина слишком большой"
-  }
+  },
+  "proxies.purity.check": "Проверить",
+  "proxies.purity.short": "Чист. ",
+  "proxies.purity.clickToCheck": "Проверить чистоту IP",
+  "proxies.purity.ip": "Выходной IP",
+  "proxies.purity.score": "Оценка чистоты",
+  "proxies.purity.checkGroup": "Проверить чистоту IP группы"
 }
