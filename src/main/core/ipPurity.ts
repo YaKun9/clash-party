@@ -250,6 +250,40 @@ async function queryProviders(
           )
         })
     )
+  } else {
+    requests.push(
+      axios
+        .get<string>(`https://scamalytics.com/ip/${encodeURIComponent(ip)}`, {
+          timeout: 10000,
+          responseType: 'text',
+          headers: {
+            'User-Agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36',
+            Referer: 'https://scamalytics.com/'
+          }
+        })
+        .then((response) => {
+          const html = response.data
+          const scoreMatch =
+            html.match(/"score"\s*:\s*"?([0-9]{1,3})"?/i) ??
+            html.match(/Fraud Score:\s*<[^>]*>\s*([0-9]{1,3})/i) ??
+            html.match(/Fraud Score:\s*([0-9]{1,3})/i)
+          const riskMatch = html.match(/"risk"\s*:\s*"([^"]+)"/i)
+          if (scoreMatch) {
+            scamalytics = {
+              score: Math.max(0, Math.min(100, Number(scoreMatch[1]))),
+              risk: riskMatch?.[1]
+            }
+          } else {
+            warnings.push('Scamalytics public page did not contain a fraud score')
+          }
+        })
+        .catch((error: unknown) => {
+          warnings.push(
+            `Scamalytics: ${error instanceof Error ? error.message : 'request failed'}`
+          )
+        })
+    )
   }
 
   requests.push(
