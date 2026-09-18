@@ -9,6 +9,7 @@ import {
   exportGistAgeSecretKey,
   generateGistAgeKeyPair,
   getGistUrl,
+  mihomoHotReloadConfig,
   restartCore
 } from '@renderer/utils/ipc'
 import { MdDeleteForever } from 'react-icons/md'
@@ -200,8 +201,14 @@ const MihomoConfig: React.FC = () => {
         <Switch
           size="sm"
           isSelected={ipPurityEnabled}
-          onValueChange={(value) => {
-            void patchAppConfig({ ipPurityEnabled: value })
+          onValueChange={async (value) => {
+            try {
+              await patchAppConfig({ ipPurityEnabled: value })
+              await clearProxyPurityCache()
+              await mihomoHotReloadConfig()
+            } catch (error) {
+              toast.error(String(error))
+            }
           }}
         />
       </SettingItem>
