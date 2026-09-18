@@ -159,12 +159,14 @@ jobs:
           import { createHash } from 'node:crypto'
           const platform = process.env.TARGET_PLATFORM
           const arch = process.env.TARGET_ARCH
+          // Debian calls the x86-64 architecture amd64 in the generated filename.
+          const filenameArch = platform === 'ubuntu' && arch === 'x64' ? 'amd64' : arch
           const files = readdirSync('dist').filter((file) => /(?:setup\.exe|portable\.7z|\.pkg|\.deb)$/.test(file))
           if (files.length !== (platform === 'windows' ? 2 : 1)) throw new Error('Unexpected package count')
           mkdirSync('release-assets')
           const sums = []
           for (const name of files) {
-            if (!name.includes('2.0.3-ip-purity.beta.2') || !name.includes(arch)) throw new Error(`Unexpected package: ${name}`)
+            if (!name.includes('2.0.3-ip-purity.beta.2') || !name.includes(filenameArch)) throw new Error(`Unexpected package: ${name}`)
             const sum = createHash('sha256').update(readFileSync(`dist/${name}`)).digest('hex')
             copyFileSync(`dist/${name}`, `release-assets/${name}`)
             writeFileSync(`release-assets/${name}.sha256`, sum + '\n')
@@ -270,7 +272,7 @@ jobs:
           ### 平台
           - Windows x64：安装版 `setup.exe` 和便携版 `portable.7z`。
           - macOS Apple Silicon：`arm64.pkg`，用于苹果芯片 Mac。
-          - Ubuntu x64 / AMD64：`x64.deb`，供联想拯救者 R720 等 Intel/AMD 64 位电脑使用；构建和测试环境为 Ubuntu 24.04。
+          - Ubuntu x64 / AMD64：`amd64.deb`，供联想拯救者 R720 等 Intel/AMD 64 位电脑使用；构建和测试环境为 Ubuntu 24.04。
 
           ### 本次更新
           - 同时检测最多 3 个节点，每个任务独占自己的隐藏选择组和本地监听端口；不会修改正常使用的代理组选择。
