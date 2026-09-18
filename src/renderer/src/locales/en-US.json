@@ -900,5 +900,16 @@
   "proxies.purity.clickToCheck": "Check IP purity",
   "proxies.purity.ip": "Exit IP",
   "proxies.purity.score": "Purity score",
-  "proxies.purity.checkGroup": "Check IP purity for this proxy group"
+  "proxies.purity.checkGroup": "Check IP purity for this proxy group",
+  "mihomo.ipPurity.enabled": "Enable IP purity checks",
+  "mihomo.ipPurity.proxycheckKey": "proxycheck.io API Key",
+  "mihomo.ipPurity.proxycheckKeyPlaceholder": "Optional; leave blank for anonymous quota",
+  "mihomo.ipPurity.scamalyticsEndpoint": "Scamalytics API endpoint",
+  "mihomo.ipPurity.scamalyticsEndpointPlaceholder": "Optional; public lookup is used when empty. Supports {ip} / {key}",
+  "mihomo.ipPurity.scamalyticsKey": "Scamalytics API Key",
+  "mihomo.ipPurity.scamalyticsKeyPlaceholder": "Used with a custom Scamalytics API endpoint",
+  "mihomo.ipPurity.cacheHours": "IP purity cache",
+  "mihomo.ipPurity.hours": "hours",
+  "mihomo.ipPurity.clearCache": "Clear cache",
+  "mihomo.ipPurity.cacheCleared": "IP purity cache cleared"
 }
