@@ -95,7 +95,7 @@ const ProxyItemBase: React.FC<Props> = (props) => {
     return parts.join('\n')
   }, [purity, t])
 
-  const purityButton = onPurity ? (
+  const purityButton = onPurity && !('all' in proxy) ? (
     <Tooltip content={<span className="whitespace-pre-line text-xs">{purityTooltip}</span>}>
       <Button
         size="sm"
