@@ -900,5 +900,16 @@
   "proxies.purity.clickToCheck": "点击检测 IP 纯净度",
   "proxies.purity.ip": "出口 IP",
   "proxies.purity.score": "综合纯净度",
-  "proxies.purity.checkGroup": "检测当前代理组 IP 纯净度"
+  "proxies.purity.checkGroup": "检测当前代理组 IP 纯净度",
+  "mihomo.ipPurity.enabled": "启用 IP 纯净度检测",
+  "mihomo.ipPurity.proxycheckKey": "proxycheck.io API Key",
+  "mihomo.ipPurity.proxycheckKeyPlaceholder": "可选；留空使用匿名额度",
+  "mihomo.ipPurity.scamalyticsEndpoint": "Scamalytics API 地址",
+  "mihomo.ipPurity.scamalyticsEndpointPlaceholder": "可选；留空使用公共查询页，可用 {ip} / {key} 占位",
+  "mihomo.ipPurity.scamalyticsKey": "Scamalytics API Key",
+  "mihomo.ipPurity.scamalyticsKeyPlaceholder": "使用自定义 API 地址时填写",
+  "mihomo.ipPurity.cacheHours": "纯净度缓存时间",
+  "mihomo.ipPurity.hours": "小时",
+  "mihomo.ipPurity.clearCache": "清除缓存",
+  "mihomo.ipPurity.cacheCleared": "IP 纯净度缓存已清除"
 }
