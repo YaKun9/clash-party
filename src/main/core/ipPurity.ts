@@ -2,6 +2,7 @@ import axios from 'axios'
 import { createServer } from 'net'
 import { getAppConfig } from '../config'
 import { getAxios } from './mihomoApi'
+import { getRuntimeConfig } from './factory'
 
 const EGRESS_IP_URL = 'https://api.ipify.org?format=json'
 const PROXYCHECK_API = 'https://proxycheck.io/v3'
@@ -172,7 +173,7 @@ function calculatePurityScore(
 
 async function discoverExitIp(proxy: string): Promise<string> {
   const instance = await getAxios()
-  const current = (await instance.get('/configs')) as Partial<IMihomoConfig>
+  const current = await getRuntimeConfig()
   const originalListeners = Array.isArray(current.listeners) ? current.listeners : []
   const port = await getFreePort()
   const listenerName = `__clash_party_ip_purity_${Date.now()}_${Math.random().toString(36).slice(2)}`
