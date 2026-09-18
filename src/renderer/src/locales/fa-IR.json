@@ -877,5 +877,16 @@
   "proxies.purity.clickToCheck": "بررسی پاکی IP",
   "proxies.purity.ip": "IP خروجی",
   "proxies.purity.score": "امتیاز پاکی",
-  "proxies.purity.checkGroup": "بررسی پاکی IP گروه"
+  "proxies.purity.checkGroup": "بررسی پاکی IP گروه",
+  "mihomo.ipPurity.enabled": "فعال‌سازی بررسی پاکی IP",
+  "mihomo.ipPurity.proxycheckKey": "کلید API proxycheck.io",
+  "mihomo.ipPurity.proxycheckKeyPlaceholder": "اختیاری؛ خالی برای سهمیه ناشناس",
+  "mihomo.ipPurity.scamalyticsEndpoint": "نشانی API Scamalytics",
+  "mihomo.ipPurity.scamalyticsEndpointPlaceholder": "اختیاری؛ در حالت خالی از صفحه عمومی استفاده می‌شود. {ip} / {key}",
+  "mihomo.ipPurity.scamalyticsKey": "کلید API Scamalytics",
+  "mihomo.ipPurity.scamalyticsKeyPlaceholder": "برای API سفارشی Scamalytics",
+  "mihomo.ipPurity.cacheHours": "کش پاکی IP",
+  "mihomo.ipPurity.hours": "ساعت",
+  "mihomo.ipPurity.clearCache": "پاک کردن کش",
+  "mihomo.ipPurity.cacheCleared": "کش پاکی IP پاک شد"
 }
