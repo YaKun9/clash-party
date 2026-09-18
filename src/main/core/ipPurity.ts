@@ -177,7 +177,8 @@ async function discoverExitIp(proxy: string): Promise<string> {
   const current = await getRuntimeConfig()
   const originalListeners = Array.isArray(current.listeners) ? current.listeners : []
   const port = await getFreePort()
-  const listenerName = `__clash_party_ip_purity_${Date.now()}_${Math.random().toString(36).slice(2)}`
+  const listenerName =
+    `__clash_party_ip_purity_${Date.now()}_${Math.random().toString(36).slice(2)}`
 
   const listener = {
     name: listenerName,
