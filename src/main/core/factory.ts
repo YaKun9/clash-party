@@ -57,9 +57,8 @@ export interface GenerateProfileResult {
   dnsGuard: DnsOverrideGuardResult
 }
 
-
 async function injectIpPurityRuntime(profile: IMihomoConfig, enabled: boolean): Promise<void> {
-  const runtime = profile as IMihomoConfig & {
+  const runtime = profile as unknown as {
     'proxy-groups'?: Record<string, unknown>[]
     listeners?: Record<string, unknown>[]
   }
