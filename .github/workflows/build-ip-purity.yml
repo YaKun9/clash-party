@@ -36,6 +36,14 @@ jobs:
         with:
           node-version: 22
           cache: 'pnpm'
+      - name: Use canonical font download URL
+        run: |
+          $path = Join-Path $PWD 'scripts/prepare.mjs'
+          $content = [System.IO.File]::ReadAllText($path)
+          $old = 'https://github.com/googlefonts/noto-emoji/raw/main/fonts/NotoColorEmoji.ttf'
+          $new = 'https://raw.githubusercontent.com/googlefonts/noto-emoji/main/fonts/NotoColorEmoji.ttf'
+          if (-not $content.Contains($old)) { throw 'Expected font download URL was not found' }
+          [System.IO.File]::WriteAllText($path, $content.Replace($old, $new))
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Set development version
@@ -64,6 +72,7 @@ jobs:
             'Ref: ' + $env:GITHUB_REF_NAME
             'Commit: ' + $env:GITHUB_SHA
             'Run: ' + $env:GITHUB_RUN_ID
+            'Build-only change: use the canonical raw URL for Noto Emoji.'
             'Experimental IP purity build; not a stable upstream release.'
           ) | Set-Content -Path 'dist/BUILD-INFO.txt' -Encoding utf8
       - name: Upload Windows x64 test packages
