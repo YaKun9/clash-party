@@ -1,0 +1,28 @@
+name: Format preview
+
+on:
+  push:
+    branches:
+      - feature/ip-purity
+
+permissions:
+  contents: read
+
+jobs:
+  prettier:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --ignore-scripts
+      - name: Print formatted IP purity module
+        run: |
+          pnpm exec prettier --write src/main/core/ipPurity.ts
+          echo "FORMATTED_FILE_BEGIN"
+          base64 -w0 src/main/core/ipPurity.ts
+          echo
+          echo "FORMATTED_FILE_END"
