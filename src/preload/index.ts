@@ -25,6 +25,7 @@ const validInvokeChannels = [
   'mihomoSmartGroupWeights',
   'mihomoSmartFlushCache',
   'mihomoProxyPurity',
+  'getProxyPurityState',
   'queryTrafficUsageOverview',
   'queryTrafficUsageBreakdown',
   'importTrafficUsage',

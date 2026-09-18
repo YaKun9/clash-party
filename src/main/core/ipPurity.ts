@@ -17,6 +17,8 @@ interface CachedPurity {
 }
 
 const proxyCache = new Map<string, CachedPurity>()
+const pendingChecks = new Map<string, Promise<IProxyPurityResult>>()
+let cacheGeneration = 0
 const ipProviderCache = new Map<
   string,
   {
@@ -185,7 +187,8 @@ async function discoverExitIp(proxy: string): Promise<string> {
 
 async function queryProviders(
   ip: string,
-  cacheMs: number
+  cacheMs: number,
+  generation: number
 ): Promise<{
   scamalytics?: IProxyPurityProviderScamalytics
   proxycheck?: IProxyPurityProviderProxyCheck
@@ -248,20 +251,27 @@ async function queryProviders(
 
   await Promise.all(requests)
 
-  ipProviderCache.set(ip, {
-    expiresAt: now + cacheMs,
-    scamalytics,
-    proxycheck,
-    warnings
-  })
+  // Clearing the cache must not be undone by an older in-flight request.
+  // Failed lookups are not valid cached results and must remain retryable.
+  if (generation === cacheGeneration && (scamalytics || proxycheck)) {
+    ipProviderCache.set(ip, {
+      expiresAt: now + cacheMs,
+      scamalytics,
+      proxycheck,
+      warnings
+    })
+  }
 
   return { scamalytics, proxycheck, warnings }
 }
 
-async function checkProxyPurity(proxy: string): Promise<IProxyPurityResult> {
+async function checkProxyPurity(proxy: string, generation: number): Promise<IProxyPurityResult> {
   const config = await getAppConfig()
   if (config.ipPurityEnabled === false) {
     throw new Error('IP purity checking is disabled')
+  }
+  if (generation !== cacheGeneration) {
+    throw new Error('IP purity cache was cleared; start a new check')
   }
 
   const cacheHours = Math.max(0.25, Math.min(168, config.ipPurityCacheHours ?? 24))
@@ -271,7 +281,7 @@ async function checkProxyPurity(proxy: string): Promise<IProxyPurityResult> {
   if (cached && cached.expiresAt > now) return cached.result
 
   const ip = await discoverExitIp(proxy)
-  const providers = await queryProviders(ip, cacheMs)
+  const providers = await queryProviders(ip, cacheMs, generation)
   const score = calculatePurityScore(providers.scamalytics, providers.proxycheck)
 
   if (!providers.scamalytics && !providers.proxycheck) {
@@ -288,15 +298,40 @@ async function checkProxyPurity(proxy: string): Promise<IProxyPurityResult> {
     warnings: providers.warnings.length > 0 ? providers.warnings : undefined
   }
 
-  proxyCache.set(proxy, { result, expiresAt: Date.now() + cacheMs })
+  if (generation === cacheGeneration) {
+    proxyCache.set(proxy, { result, expiresAt: Date.now() + cacheMs })
+  }
   return result
 }
 
-export async function mihomoProxyPurity(proxy: string): Promise<IProxyPurityResult> {
-  return await enqueue(() => checkProxyPurity(proxy))
+// Read-only IPC snapshot: restoring a page must never spend a provider API request.
+export async function getProxyPurityState(): Promise<{
+  results: Record<string, IProxyPurityResult>
+  checking: string[]
+}> {
+  const now = Date.now()
+  const entries: [string, IProxyPurityResult][] = []
+  for (const [proxy, cached] of proxyCache) {
+    if (cached.expiresAt > now) entries.push([proxy, cached.result])
+    else proxyCache.delete(proxy)
+  }
+  return { results: Object.fromEntries(entries), checking: [...pendingChecks.keys()] }
+}
+
+export function mihomoProxyPurity(proxy: string): Promise<IProxyPurityResult> {
+  const pending = pendingChecks.get(proxy)
+  if (pending) return pending
+
+  const generation = cacheGeneration
+  const run = enqueue(() => checkProxyPurity(proxy, generation)).finally(() => {
+    if (pendingChecks.get(proxy) === run) pendingChecks.delete(proxy)
+  })
+  pendingChecks.set(proxy, run)
+  return run
 }
 
 export function clearProxyPurityCache(): void {
+  cacheGeneration++
   proxyCache.clear()
   ipProviderCache.clear()
 }
