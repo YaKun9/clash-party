@@ -116,7 +116,7 @@ function parseProxyCheck(ip: string, data: unknown): IProxyPurityProviderProxyCh
       ? (obj.location as Record<string, unknown>)
       : {}
 
-  const riskScore = asNumber(detections.risk_score ?? obj.risk_score ?? obj.risk)
+  const riskScore = asNumber(detections.risk ?? detections.risk_score ?? obj.risk_score ?? obj.risk)
   if (riskScore === undefined) return undefined
 
   return {
