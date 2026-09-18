@@ -1,13 +1,14 @@
 import { useCallback, useMemo } from 'react'
 import useSWR from 'swr'
 import { mihomoProxyPurity } from '@renderer/utils/ipc'
-import { getProxyPurityState } from '@renderer/utils/ip-purity'
-import { toast } from '@renderer/components/base/toast'
-
-const EMPTY_RESULTS: Record<string, IProxyPurityResult> = {}
+import {
+  getProxyPurityState,
+  toProxyPurityResults,
+  type ProxyPurityDisplayResult
+} from '@renderer/utils/ip-purity'
 
 export function useProxyPurity(): {
-  purityResults: Record<string, IProxyPurityResult>
+  purityResults: Record<string, ProxyPurityDisplayResult>
   purityChecking: Set<string>
   onProxyPurity: (proxy: IMihomoProxy | IMihomoGroup) => Promise<void>
 } {
@@ -31,8 +32,9 @@ export function useProxyPurity(): {
       void refresh().catch(console.error)
       try {
         await request
-      } catch (error) {
-        toast.error(String(error))
+      } catch {
+        // The main process records a per-node timeout. Do not produce one toast
+        // per failure (especially during group checks), or stop the batch.
       } finally {
         // Read the cache instead of merging the returned result: a clear during the
         // request must not be undone by a stale completion in an unmounted page.
@@ -42,6 +44,7 @@ export function useProxyPurity(): {
     [refresh]
   )
 
+  const purityResults = useMemo(() => toProxyPurityResults(data), [data])
   const purityChecking = useMemo(() => new Set(data?.checking ?? []), [data?.checking])
-  return { purityResults: data?.results ?? EMPTY_RESULTS, purityChecking, onProxyPurity }
+  return { purityResults, purityChecking, onProxyPurity }
 }

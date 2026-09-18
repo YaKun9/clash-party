@@ -15,6 +15,7 @@ import { clearProxyPurityCache, getProxyPurityState, mihomoProxyPurity } from '.
 
 const IP = '203.0.113.1'
 const providerResponse = { data: { [IP]: { detections: { risk: 10 } } } }
+const emptyState = { results: {}, checking: [], failed: [] }
 
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   let resolve!: (value: T) => void
@@ -40,7 +41,7 @@ afterEach(() => {
 
 describe('IP purity cache restoration', () => {
   it('reads an empty snapshot without network activity', async () => {
-    expect(await getProxyPurityState()).toEqual({ results: {}, checking: [] })
+    expect(await getProxyPurityState()).toEqual(emptyState)
     expect(mocks.httpGet).not.toHaveBeenCalled()
     expect(mocks.put).not.toHaveBeenCalled()
   })
@@ -49,8 +50,9 @@ describe('IP purity cache restoration', () => {
     const result = await mihomoProxyPurity('Singapore')
     expect(mocks.httpGet).toHaveBeenCalledTimes(2)
     vi.setSystemTime(Date.now() + 60000)
-    expect(await getProxyPurityState()).toEqual({ results: { Singapore: result }, checking: [] })
-    expect(await getProxyPurityState()).toEqual({ results: { Singapore: result }, checking: [] })
+    const expected = { ...emptyState, results: { Singapore: result } }
+    expect(await getProxyPurityState()).toEqual(expected)
+    expect(await getProxyPurityState()).toEqual(expected)
     expect(await mihomoProxyPurity('Singapore')).toEqual(result)
     expect(mocks.httpGet).toHaveBeenCalledTimes(2)
   })
@@ -70,7 +72,7 @@ describe('IP purity cache restoration', () => {
     expect((await getProxyPurityState()).checking).toEqual(['Singapore'])
     response.resolve(providerResponse)
     const result = await first
-    expect(await getProxyPurityState()).toEqual({ results: { Singapore: result }, checking: [] })
+    expect(await getProxyPurityState()).toEqual({ ...emptyState, results: { Singapore: result } })
     expect(mocks.httpGet).toHaveBeenCalledTimes(2)
   })
 
@@ -85,7 +87,7 @@ describe('IP purity cache restoration', () => {
   it('expires results without automatically rechecking the node', async () => {
     await mihomoProxyPurity('Singapore')
     vi.setSystemTime(Date.now() + 24 * 60 * 60 * 1000)
-    expect(await getProxyPurityState()).toEqual({ results: {}, checking: [] })
+    expect(await getProxyPurityState()).toEqual(emptyState)
     expect(mocks.httpGet).toHaveBeenCalledTimes(2)
     await mihomoProxyPurity('Singapore')
     expect(mocks.httpGet).toHaveBeenCalledTimes(4)
@@ -94,7 +96,7 @@ describe('IP purity cache restoration', () => {
   it('does not restore cleared results on the next page read', async () => {
     await mihomoProxyPurity('Singapore')
     clearProxyPurityCache()
-    expect(await getProxyPurityState()).toEqual({ results: {}, checking: [] })
+    expect(await getProxyPurityState()).toEqual(emptyState)
     expect(mocks.httpGet).toHaveBeenCalledTimes(2)
   })
 
@@ -111,19 +113,100 @@ describe('IP purity cache restoration', () => {
     clearProxyPurityCache()
     response.resolve(providerResponse)
     await request
-    expect(await getProxyPurityState()).toEqual({ results: {}, checking: [] })
+    expect(await getProxyPurityState()).toEqual(emptyState)
     await mihomoProxyPurity('Singapore2')
     expect(mocks.httpGet).toHaveBeenCalledTimes(4)
   })
 
-  it('does not cache failures or prevent an explicit retry', async () => {
+  it('restores failure display state without blocking an explicit retry', async () => {
     mocks.httpGet
       .mockResolvedValueOnce({ data: { ip: IP } })
       .mockRejectedValueOnce(new Error('offline'))
     await expect(mihomoProxyPurity('Singapore')).rejects.toThrow('offline')
-    expect(await getProxyPurityState()).toEqual({ results: {}, checking: [] })
+    const expected = { ...emptyState, failed: ['Singapore'] }
+    expect(await getProxyPurityState()).toEqual(expected)
+    expect(await getProxyPurityState()).toEqual(expected)
+    expect(mocks.httpGet).toHaveBeenCalledTimes(2)
     await mihomoProxyPurity('Singapore')
     expect((await getProxyPurityState()).results.Singapore.score).toBe(90)
+    expect((await getProxyPurityState()).failed).toEqual([])
     expect(mocks.httpGet).toHaveBeenCalledTimes(4)
+  })
+
+  it('marks TLS failures inline and allows the next node in the batch to run', async () => {
+    mocks.httpGet.mockRejectedValueOnce(
+      new Error('Client network socket disconnected before secure TLS connection was established')
+    )
+    await expect(mihomoProxyPurity('Hong Kong')).rejects.toThrow('TLS')
+    await mihomoProxyPurity('Singapore')
+    const state = await getProxyPurityState()
+    expect(state.failed).toEqual(['Hong Kong'])
+    expect(state.results.Singapore.score).toBe(90)
+    expect(state.results['Hong Kong']).toBeUndefined()
+    expect(state.checking).toEqual([])
+  })
+
+  it('clears failed markers together with successful results', async () => {
+    mocks.httpGet.mockRejectedValueOnce(new Error('offline'))
+    await expect(mihomoProxyPurity('Singapore')).rejects.toThrow()
+    clearProxyPurityCache()
+    expect(await getProxyPurityState()).toEqual(emptyState)
+  })
+
+  it('does not resurrect failure state after clearing a pending request', async () => {
+    const started = deferred<void>()
+    const resume = deferred<void>()
+    mocks.httpGet.mockImplementationOnce(async () => {
+      started.resolve()
+      await resume.promise
+      throw new Error('late failure')
+    })
+    const assertion = expect(mihomoProxyPurity('Singapore')).rejects.toThrow('late failure')
+    await started.promise
+    clearProxyPurityCache()
+    resume.resolve()
+    await assertion
+    expect(await getProxyPurityState()).toEqual(emptyState)
+  })
+})
+
+describe('valid zero scores versus missing or failed results', () => {
+  it('preserves a real zero purity result when the provider reports risk 100', async () => {
+    mocks.httpGet
+      .mockResolvedValueOnce({ data: { ip: IP } })
+      .mockResolvedValueOnce({
+        data: { status: 'ok', [IP]: { detections: { risk: 100, proxy: true } } }
+      })
+    const result = await mihomoProxyPurity('Proxy')
+    expect(result.score).toBe(0)
+    expect(result.proxycheck?.riskScore).toBe(100)
+    expect((await getProxyPurityState()).failed).toEqual([])
+    expect((await getProxyPurityState()).results.Proxy.score).toBe(0)
+  })
+
+  it('accepts a numeric zero risk score without treating it as missing', async () => {
+    mocks.httpGet
+      .mockResolvedValueOnce({ data: { ip: IP } })
+      .mockResolvedValueOnce({ data: { [IP]: { detections: { risk: 0 } } } })
+    expect((await mihomoProxyPurity('Singapore')).score).toBe(100)
+  })
+
+  it.each(['', ' ', null, undefined, -1, 101, 'invalid', NaN, Infinity])(
+    'does not fabricate a score for invalid risk %s',
+    async (risk) => {
+      mocks.httpGet
+        .mockResolvedValueOnce({ data: { ip: IP } })
+        .mockResolvedValueOnce({ data: { [IP]: { detections: { risk } } } })
+      await expect(mihomoProxyPurity('Singapore')).rejects.toThrow('unsupported response')
+      expect(await getProxyPurityState()).toEqual({ ...emptyState, failed: ['Singapore'] })
+    }
+  )
+
+  it('does not accept an API error body as a valid zero risk result', async () => {
+    mocks.httpGet
+      .mockResolvedValueOnce({ data: { ip: IP } })
+      .mockResolvedValueOnce({ data: { status: 'error', [IP]: { detections: { risk: 0 } } } })
+    await expect(mihomoProxyPurity('Singapore')).rejects.toThrow('unsupported response')
+    expect((await getProxyPurityState()).results).toEqual({})
   })
 })

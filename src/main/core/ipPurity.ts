@@ -18,6 +18,8 @@ interface CachedPurity {
 
 const proxyCache = new Map<string, CachedPurity>()
 const pendingChecks = new Map<string, Promise<IProxyPurityResult>>()
+// Last-attempt display state only: failures never prevent an explicit retry.
+const failedChecks = new Set<string>()
 let cacheGeneration = 0
 const ipProviderCache = new Map<
   string,
@@ -56,11 +58,17 @@ function buildScamalyticsUrl(endpoint: string, key: string, ip: string): string 
 
 function asNumber(value: unknown): number | undefined {
   if (typeof value === 'number' && Number.isFinite(value)) return value
-  if (typeof value === 'string') {
+  if (typeof value === 'string' && value.trim() !== '') {
     const parsed = Number(value)
     if (Number.isFinite(parsed)) return parsed
   }
   return undefined
+}
+
+function asScore(value: unknown): number | undefined {
+  const score = asNumber(value)
+  // Missing, malformed and out-of-range values are not valid zero-risk results.
+  return score !== undefined && score >= 0 && score <= 100 ? score : undefined
 }
 
 function asBoolean(value: unknown): boolean | undefined {
@@ -75,7 +83,7 @@ function parseScamalytics(data: unknown): IProxyPurityProviderScamalytics | unde
       ? (obj.scamalytics as Record<string, unknown>)
       : obj
 
-  const score = asNumber(
+  const score = asScore(
     nested.scamalytics_score ?? nested.score ?? nested.fraud_score ?? obj.score ?? obj.fraud_score
   )
   if (score === undefined) return undefined
@@ -87,15 +95,13 @@ function parseScamalytics(data: unknown): IProxyPurityProviderScamalytics | unde
         ? nested.risk
         : undefined
 
-  return {
-    score: Math.max(0, Math.min(100, score)),
-    risk
-  }
+  return { score, risk }
 }
 
 function parseProxyCheck(ip: string, data: unknown): IProxyPurityProviderProxyCheck | undefined {
   if (!data || typeof data !== 'object') return undefined
   const root = data as ProxyCheckV3Response
+  if (root.status && root.status !== 'ok' && root.status !== 'warning') return undefined
   const entry = root[ip]
   if (!entry || typeof entry !== 'object') return undefined
 
@@ -111,11 +117,11 @@ function parseProxyCheck(ip: string, data: unknown): IProxyPurityProviderProxyCh
       ? (obj.location as Record<string, unknown>)
       : {}
 
-  const riskScore = asNumber(detections.risk ?? detections.risk_score ?? obj.risk_score ?? obj.risk)
+  const riskScore = asScore(detections.risk ?? detections.risk_score ?? obj.risk_score ?? obj.risk)
   if (riskScore === undefined) return undefined
 
   return {
-    riskScore: Math.max(0, Math.min(100, riskScore)),
+    riskScore,
     confidence: asNumber(detections.confidence),
     proxy: asBoolean(detections.proxy),
     vpn: asBoolean(detections.vpn),
@@ -159,7 +165,7 @@ function calculatePurityScore(
   const risks: number[] = []
   if (scamalytics) risks.push(scamalytics.score)
   if (proxycheck) risks.push(adjustedProxyCheckRisk(proxycheck))
-  if (risks.length === 0) return 0
+  if (risks.length === 0) throw new Error('No IP purity provider returned a valid score')
 
   const averageRisk = risks.reduce((sum, value) => sum + value, 0) / risks.length
   return Math.max(0, Math.min(100, Math.round(100 - averageRisk)))
@@ -282,11 +288,11 @@ async function checkProxyPurity(proxy: string, generation: number): Promise<IPro
 
   const ip = await discoverExitIp(proxy)
   const providers = await queryProviders(ip, cacheMs, generation)
-  const score = calculatePurityScore(providers.scamalytics, providers.proxycheck)
 
   if (!providers.scamalytics && !providers.proxycheck) {
     throw new Error(providers.warnings[0] || 'No IP purity provider returned a result')
   }
+  const score = calculatePurityScore(providers.scamalytics, providers.proxycheck)
 
   const result: IProxyPurityResult = {
     proxy,
@@ -308,6 +314,7 @@ async function checkProxyPurity(proxy: string, generation: number): Promise<IPro
 export async function getProxyPurityState(): Promise<{
   results: Record<string, IProxyPurityResult>
   checking: string[]
+  failed: string[]
 }> {
   const now = Date.now()
   const entries: [string, IProxyPurityResult][] = []
@@ -315,17 +322,32 @@ export async function getProxyPurityState(): Promise<{
     if (cached.expiresAt > now) entries.push([proxy, cached.result])
     else proxyCache.delete(proxy)
   }
-  return { results: Object.fromEntries(entries), checking: [...pendingChecks.keys()] }
+  return {
+    results: Object.fromEntries(entries),
+    checking: [...pendingChecks.keys()],
+    failed: [...failedChecks]
+  }
 }
 
 export function mihomoProxyPurity(proxy: string): Promise<IProxyPurityResult> {
   const pending = pendingChecks.get(proxy)
   if (pending) return pending
 
+  failedChecks.delete(proxy)
   const generation = cacheGeneration
-  const run = enqueue(() => checkProxyPurity(proxy, generation)).finally(() => {
-    if (pendingChecks.get(proxy) === run) pendingChecks.delete(proxy)
-  })
+  const run = enqueue(() => checkProxyPurity(proxy, generation))
+    .catch((error: unknown) => {
+      if (generation === cacheGeneration) {
+        // Never encode a failed attempt as a zero purity score. Keep the marker
+        // across route changes, without caching the failure as an API response.
+        proxyCache.delete(proxy)
+        failedChecks.add(proxy)
+      }
+      throw error
+    })
+    .finally(() => {
+      if (pendingChecks.get(proxy) === run) pendingChecks.delete(proxy)
+    })
   pendingChecks.set(proxy, run)
   return run
 }
@@ -334,4 +356,5 @@ export function clearProxyPurityCache(): void {
   cacheGeneration++
   proxyCache.clear()
   ipProviderCache.clear()
+  failedChecks.clear()
 }
