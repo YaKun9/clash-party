@@ -905,7 +905,7 @@
   "mihomo.ipPurity.proxycheckKey": "proxycheck.io API Key",
   "mihomo.ipPurity.proxycheckKeyPlaceholder": "Optional; leave blank for anonymous quota",
   "mihomo.ipPurity.scamalyticsEndpoint": "Scamalytics API endpoint",
-  "mihomo.ipPurity.scamalyticsEndpointPlaceholder": "Optional; public lookup is used when empty. Supports {ip} / {key}",
+  "mihomo.ipPurity.scamalyticsEndpointPlaceholder": "Optional; enter the Scamalytics API endpoint. Supports {ip} / {key}",
   "mihomo.ipPurity.scamalyticsKey": "Scamalytics API Key",
   "mihomo.ipPurity.scamalyticsKeyPlaceholder": "Used with a custom Scamalytics API endpoint",
   "mihomo.ipPurity.cacheHours": "IP purity cache",
