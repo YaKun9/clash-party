@@ -149,6 +149,7 @@ import { logDir, rulePath } from './dirs'
 import { installMihomoCore, getGitHubTags, clearVersionCache } from './github'
 import { atomicWriteFile } from './safeFile'
 import { startSubStoreServices } from './init'
+import { clearProxyPurityCache, mihomoProxyPurity } from '../core/ipPurity'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AsyncFn = (...args: any[]) => Promise<any>
@@ -265,6 +266,7 @@ const asyncHandlers: Record<string, AsyncFn> = {
   patchMihomoConfig,
   mihomoSmartGroupWeights,
   mihomoSmartFlushCache,
+  mihomoProxyPurity,
   // AutoRun
   checkAutoRun,
   enableAutoRun,
@@ -383,6 +385,7 @@ const asyncHandlers: Record<string, AsyncFn> = {
   exportGistAgeSecretKey,
   fetchIPInfo,
   measureLatency,
+  clearProxyPurityCache: async () => clearProxyPurityCache(),
   getImageDataURL,
   readImageFileDataURL,
   getIconDataURL,
