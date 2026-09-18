@@ -871,5 +871,11 @@
     "previewFailed": "فایل افزونه نامعتبر است",
     "outdatedFile": "قالب فایل افزونه قدیمی است؛ لطفاً نسخه جدید را از سرویس‌دهنده دریافت کنید",
     "fileTooLarge": "فایل افزونه بیش از حد بزرگ است"
-  }
+  },
+  "proxies.purity.check": "بررسی",
+  "proxies.purity.short": "پاک ",
+  "proxies.purity.clickToCheck": "بررسی پاکی IP",
+  "proxies.purity.ip": "IP خروجی",
+  "proxies.purity.score": "امتیاز پاکی",
+  "proxies.purity.checkGroup": "بررسی پاکی IP گروه"
 }
