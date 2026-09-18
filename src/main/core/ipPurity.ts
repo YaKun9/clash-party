@@ -28,6 +28,7 @@ const ipProviderCache = new Map<
   }
 >()
 
+// Listener changes touch the shared runtime config, so node checks are serialized.
 let purityQueue: Promise<void> = Promise.resolve()
 
 function enqueue<T>(task: () => Promise<T>): Promise<T> {
