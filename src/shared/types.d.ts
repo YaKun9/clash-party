@@ -258,6 +258,35 @@ interface INetworkLatencyTarget {
   url: string
 }
 
+interface IProxyPurityProviderScamalytics {
+  score: number
+  risk?: string
+}
+
+interface IProxyPurityProviderProxyCheck {
+  riskScore: number
+  confidence?: number
+  proxy?: boolean
+  vpn?: boolean
+  tor?: boolean
+  hosting?: boolean
+  compromised?: boolean
+  anonymous?: boolean
+  networkType?: string
+  provider?: string
+  country?: string
+}
+
+interface IProxyPurityResult {
+  proxy: string
+  ip: string
+  score: number
+  checkedAt: number
+  scamalytics?: IProxyPurityProviderScamalytics
+  proxycheck?: IProxyPurityProviderProxyCheck
+  warnings?: string[]
+}
+
 interface ICustomTrayIcons {
   off?: string
   sysProxy?: string
@@ -382,6 +411,11 @@ interface IAppConfig {
   networkLatencyTargets?: INetworkLatencyTarget[]
   networkIPProvider?: 'ip.sb' | 'ipwho.is' | 'ipapi.is'
   networkInfoCardOrder?: NetworkInfoCardKey[]
+  ipPurityEnabled?: boolean
+  ipPurityProxycheckApiKey?: string
+  ipPurityScamalyticsEndpoint?: string
+  ipPurityScamalyticsApiKey?: string
+  ipPurityCacheHours?: number
   subscriptionTimeout?: number
   encryptedPassword?: number[]
   controlDns?: boolean
@@ -539,6 +573,15 @@ interface IMihomoConfig {
   'lan-disallowed-ips'?: string[]
   authentication: string[]
   port?: number
+  listeners?: Array<{
+    name: string
+    type: string
+    port: number
+    listen?: string
+    proxy?: string
+    udp?: boolean
+    users?: Array<{ username: string; password: string }>
+  }>
   proxies?: []
   'proxy-groups'?: []
   rules?: []

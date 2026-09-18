@@ -27,6 +27,7 @@ import { decryptAgeContent } from '../utils/age'
 import { DEFAULT_CONTROL_DNS, DEFAULT_CONTROL_SNIFF } from '../../shared/appConfig'
 import { atomicWriteFile } from '../utils/safeFile'
 import { evaluateDnsOverrideGuard, type DnsOverrideGuardResult } from './dnsOverrideGuard'
+import { injectIpPurityRuntime } from './ipPurityRuntime'
 
 const factoryLogger = createLogger('Factory')
 const SMART_OVERRIDE_ID = 'smart-core-override'
@@ -221,6 +222,7 @@ export async function generateProfile(
   }
   const nextRuntimeConfigStr = stringify(profile)
   const coreProfile = { ...profile }
+  await injectIpPurityRuntime(coreProfile, appConfig.ipPurityEnabled !== false)
   // 日志解析启动检测需要基础日志；预览和 Gist 保留用户的实际配置。
   if (['info', 'debug'].includes(coreProfile['log-level']) === false) {
     coreProfile['log-level'] = 'info'
