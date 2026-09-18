@@ -7,8 +7,9 @@ vi.mock('../config', () => ({
 }))
 vi.mock('./mihomoApi', () => ({ getAxios: async () => ({ put: mocks.put }) }))
 vi.mock('./ipPurityRuntime', () => ({
-  ensureIpPurityPort: async () => 17990,
-  IP_PURITY_GROUP_NAME: 'test-purity'
+  ensureIpPurityPort: async (slot: number) => 17990 + slot,
+  ipPurityGroupName: (slot: number) => `test-purity-${slot}`,
+  IP_PURITY_CONCURRENCY: 3
 }))
 
 import { clearProxyPurityCache, getProxyPurityState, mihomoProxyPurity } from './ipPurity'
@@ -205,5 +206,68 @@ describe('valid zero scores versus missing or failed results', () => {
     })
     await expect(mihomoProxyPurity('Singapore')).rejects.toThrow('unsupported response')
     expect((await getProxyPurityState()).results).toEqual({})
+  })
+})
+
+describe('isolated bounded concurrency', () => {
+  it('runs three different exits concurrently and queues the fourth without mixing routes', async () => {
+    const selected = new Map<number, string>()
+    const ipFor = { A: '203.0.113.1', B: '203.0.113.2', C: '203.0.113.3', D: '203.0.113.4' }
+    const firstThreeStarted = deferred<void>()
+    const release = deferred<void>()
+    const ports = new Set<number>()
+    let probes = 0
+    mocks.put.mockImplementation(async (url: string, body: { name: string }) => {
+      const slot = Number(url.slice(-1))
+      selected.set(17990 + slot, body.name)
+    })
+    mocks.httpGet.mockImplementation(
+      async (url: string, options?: { proxy?: { port: number } }) => {
+        if (url.includes('ipify.org')) {
+          const port = options!.proxy!.port
+          ports.add(port)
+          const node = selected.get(port) as keyof typeof ipFor
+          probes++
+          if (probes === 3) firstThreeStarted.resolve()
+          await release.promise
+          // No other task may change this selector while this probe is active.
+          expect(selected.get(port)).toBe(node)
+          return { data: { ip: ipFor[node] } }
+        }
+        const ip = decodeURIComponent(url.split('/').pop()!)
+        return { data: { [ip]: { detections: { risk: 10 } } } }
+      }
+    )
+    const requests = ['A', 'B', 'C', 'D'].map(mihomoProxyPurity)
+    await firstThreeStarted.promise
+    expect(probes).toBe(3)
+    expect(mocks.put).toHaveBeenCalledTimes(3)
+    expect(ports.size).toBe(3)
+    expect((await getProxyPurityState()).checking).toHaveLength(4)
+    release.resolve()
+    const results = await Promise.all(requests)
+    expect(results.map((result) => result.ip)).toEqual(Object.values(ipFor))
+    expect(mocks.put).toHaveBeenCalledTimes(4)
+    expect((await getProxyPurityState()).checking).toEqual([])
+  })
+
+  it('deduplicates simultaneous provider requests for a shared exit IP', async () => {
+    const lookup = deferred<typeof providerResponse>()
+    const started = deferred<void>()
+    let lookups = 0
+    mocks.httpGet.mockImplementation(async (url: string) => {
+      if (url.includes('ipify.org')) return { data: { ip: IP } }
+      lookups++
+      started.resolve()
+      return lookup.promise
+    })
+    const requests = ['A', 'B', 'C'].map(mihomoProxyPurity)
+    await started.promise
+    for (let index = 0; index < 30; index++) await Promise.resolve()
+    expect(lookups).toBe(1)
+    expect(mocks.httpGet).toHaveBeenCalledTimes(4)
+    lookup.resolve(providerResponse)
+    const results = await Promise.all(requests)
+    expect(results.map((result) => result.score)).toEqual([90, 90, 90])
   })
 })

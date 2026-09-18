@@ -268,11 +268,10 @@ const Proxies: React.FC = () => {
   const onGroupPurity = useCallback(
     async (index: number): Promise<void> => {
       const proxies = groups[index]?.all ?? []
-      for (const proxy of proxies) {
-        if (!('all' in proxy)) {
-          await onProxyPurity(proxy)
-        }
-      }
+      // Queue all nodes; the main process limits concurrency across every group.
+      await Promise.allSettled(
+        proxies.filter((proxy) => !('all' in proxy)).map((proxy) => onProxyPurity(proxy))
+      )
     },
     [groups, onProxyPurity]
   )

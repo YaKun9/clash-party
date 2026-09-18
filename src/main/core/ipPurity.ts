@@ -1,7 +1,8 @@
 import axios from 'axios'
 import { getAppConfig } from '../config'
 import { getAxios } from './mihomoApi'
-import { ensureIpPurityPort, IP_PURITY_GROUP_NAME } from './ipPurityRuntime'
+import { ensureIpPurityPort, ipPurityGroupName, IP_PURITY_CONCURRENCY } from './ipPurityRuntime'
+import { IpPurityPool } from './ipPurityPool'
 
 const EGRESS_IP_URL = 'https://api.ipify.org?format=json'
 const PROXYCHECK_API = 'https://proxycheck.io/v3'
@@ -31,17 +32,8 @@ const ipProviderCache = new Map<
   }
 >()
 
-// Purity checks share one hidden selector/listener, so selection + request are serialized.
-let purityQueue: Promise<void> = Promise.resolve()
-
-function enqueue<T>(task: () => Promise<T>): Promise<T> {
-  const run = purityQueue.then(task, task)
-  purityQueue = run.then(
-    () => undefined,
-    () => undefined
-  )
-  return run
-}
+const purityPool = new IpPurityPool(IP_PURITY_CONCURRENCY)
+const providerRequests = new Map<string, ReturnType<typeof performProviderQuery>>()
 
 function buildScamalyticsUrl(endpoint: string, key: string, ip: string): string {
   const encodedIp = encodeURIComponent(ip)
@@ -171,11 +163,11 @@ function calculatePurityScore(
   return Math.max(0, Math.min(100, Math.round(100 - averageRisk)))
 }
 
-async function discoverExitIp(proxy: string): Promise<string> {
+async function discoverExitIp(proxy: string, slot: number): Promise<string> {
   const instance = await getAxios()
-  const port = await ensureIpPurityPort()
+  const port = await ensureIpPurityPort(slot)
 
-  await instance.put(`/proxies/${encodeURIComponent(IP_PURITY_GROUP_NAME)}`, { name: proxy })
+  await instance.put(`/proxies/${encodeURIComponent(ipPurityGroupName(slot))}`, { name: proxy })
 
   const response = await axios.get<{ ip?: string }>(EGRESS_IP_URL, {
     timeout: 10000,
@@ -191,7 +183,7 @@ async function discoverExitIp(proxy: string): Promise<string> {
   return ip
 }
 
-async function queryProviders(
+async function performProviderQuery(
   ip: string,
   cacheMs: number,
   generation: number
@@ -271,7 +263,28 @@ async function queryProviders(
   return { scamalytics, proxycheck, warnings }
 }
 
-async function checkProxyPurity(proxy: string, generation: number): Promise<IProxyPurityResult> {
+// Simultaneous nodes with the same exit IP share one in-flight lookup.
+// Include the cache generation so clearing/retrying cannot reuse an old request.
+function queryProviders(
+  ip: string,
+  cacheMs: number,
+  generation: number
+): ReturnType<typeof performProviderQuery> {
+  const key = `${generation}:${ip}`
+  const pending = providerRequests.get(key)
+  if (pending) return pending
+  const request = performProviderQuery(ip, cacheMs, generation).finally(() => {
+    if (providerRequests.get(key) === request) providerRequests.delete(key)
+  })
+  providerRequests.set(key, request)
+  return request
+}
+
+async function checkProxyPurity(
+  proxy: string,
+  generation: number,
+  slot: number
+): Promise<IProxyPurityResult> {
   const config = await getAppConfig()
   if (config.ipPurityEnabled === false) {
     throw new Error('IP purity checking is disabled')
@@ -286,7 +299,7 @@ async function checkProxyPurity(proxy: string, generation: number): Promise<IPro
   const cached = proxyCache.get(proxy)
   if (cached && cached.expiresAt > now) return cached.result
 
-  const ip = await discoverExitIp(proxy)
+  const ip = await discoverExitIp(proxy, slot)
   const providers = await queryProviders(ip, cacheMs, generation)
 
   if (!providers.scamalytics && !providers.proxycheck) {
@@ -335,7 +348,8 @@ export function mihomoProxyPurity(proxy: string): Promise<IProxyPurityResult> {
 
   failedChecks.delete(proxy)
   const generation = cacheGeneration
-  const run = enqueue(() => checkProxyPurity(proxy, generation))
+  const run = purityPool
+    .run((slot) => checkProxyPurity(proxy, generation, slot))
     .catch((error: unknown) => {
       if (generation === cacheGeneration) {
         // Never encode a failed attempt as a zero purity score. Keep the marker
