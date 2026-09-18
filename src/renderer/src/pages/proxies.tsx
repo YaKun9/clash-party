@@ -16,7 +16,8 @@ import {
   getImageDataURL,
   mihomoChangeProxy,
   mihomoCloseAllConnections,
-  mihomoProxyDelay
+  mihomoProxyDelay,
+  mihomoProxyPurity
 } from '@renderer/utils/ipc'
 import { FaLocationCrosshairs } from 'react-icons/fa6'
 import { CgDetailsLess, CgDetailsMore } from 'react-icons/cg'
@@ -26,6 +27,7 @@ import {
   MdCheck,
   MdDoubleArrow,
   MdFilterAlt,
+  MdOutlineSecurity,
   MdOutlineSpeed,
   MdVisibilityOff
 } from 'react-icons/md'
@@ -163,6 +165,8 @@ const Proxies: React.FC = () => {
     Array.from({ length: groups.length }, () => new Set<string>())
   )
   const [searchValue, setSearchValue] = useState(Array(groups.length).fill(''))
+  const [purityResults, setPurityResults] = useState<Record<string, IProxyPurityResult>>({})
+  const [purityChecking, setPurityChecking] = useState<Set<string>>(new Set())
 
   // searchValue 初始化
   useEffect(() => {
@@ -259,6 +263,38 @@ const Proxies: React.FC = () => {
       return await mihomoProxyDelay(proxy.name, url, getProviderName(proxy))
     },
     []
+  )
+
+  const onProxyPurity = useCallback(
+    async (proxy: IMihomoProxy | IMihomoGroup): Promise<void> => {
+      if (purityChecking.has(proxy.name)) return
+      setPurityChecking((prev) => new Set(prev).add(proxy.name))
+      try {
+        const result = await mihomoProxyPurity(proxy.name)
+        setPurityResults((prev) => ({ ...prev, [proxy.name]: result }))
+      } catch (error) {
+        console.error(`Failed to check IP purity for ${proxy.name}:`, error)
+      } finally {
+        setPurityChecking((prev) => {
+          const next = new Set(prev)
+          next.delete(proxy.name)
+          return next
+        })
+      }
+    },
+    [purityChecking]
+  )
+
+  const onGroupPurity = useCallback(
+    async (index: number): Promise<void> => {
+      const proxies = allProxies[index] ?? []
+      for (const proxy of proxies) {
+        if (!('all' in proxy)) {
+          await onProxyPurity(proxy)
+        }
+      }
+    },
+    [allProxies, onProxyPurity]
   )
 
   // 组测速时逐节点写回会造成 O(N²) 分配与 N 次 allProxies 重算
@@ -556,6 +592,20 @@ const Proxies: React.FC = () => {
                       <FaLocationCrosshairs className="text-lg text-foreground-500" />
                     </Button>
                     <Button
+                      title={t('proxies.purity.checkGroup')}
+                      variant="light"
+                      isLoading={(allProxies[index] ?? []).some((proxy) =>
+                        purityChecking.has(proxy.name)
+                      )}
+                      size="sm"
+                      isIconOnly
+                      onPress={() => {
+                        void onGroupPurity(index)
+                      }}
+                    >
+                      <MdOutlineSecurity className="text-lg text-foreground-500" />
+                    </Button>
+                    <Button
                       title={t('proxies.delay.test')}
                       variant="light"
                       isLoading={(delaying[index]?.size ?? 0) > 0}
@@ -593,7 +643,9 @@ const Proxies: React.FC = () => {
       allProxies,
       cols,
       virtuosoRef,
-      onGroupDelay
+      onGroupDelay,
+      onGroupPurity,
+      purityChecking
     ]
   )
 
@@ -630,6 +682,13 @@ const Proxies: React.FC = () => {
                   delaying[groupIndex]?.has(allProxies[groupIndex][innerIndex * cols + i].name) ??
                   false
                 }
+                purity={purityResults[allProxies[groupIndex][innerIndex * cols + i].name]}
+                purityChecking={purityChecking.has(
+                  allProxies[groupIndex][innerIndex * cols + i].name
+                )}
+                onPurity={(proxy) => {
+                  void onProxyPurity(proxy)
+                }}
               />
             )
           })}
@@ -648,7 +707,10 @@ const Proxies: React.FC = () => {
       delaying,
       mutate,
       onProxyDelay,
-      onChangeProxy
+      onChangeProxy,
+      purityResults,
+      purityChecking,
+      onProxyPurity
     ]
   )
 
