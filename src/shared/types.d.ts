@@ -580,6 +580,7 @@ interface IMihomoConfig {
     listen?: string
     proxy?: string
     udp?: boolean
+    users?: Array<{ username: string; password: string }>
   }>
   proxies?: []
   'proxy-groups'?: []
