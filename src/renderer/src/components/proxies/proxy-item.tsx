@@ -95,20 +95,21 @@ const ProxyItemBase: React.FC<Props> = (props) => {
     return parts.join('\n')
   }, [purity, t])
 
-  const purityButton = onPurity && !('all' in proxy) ? (
-    <Tooltip content={<span className="whitespace-pre-line text-xs">{purityTooltip}</span>}>
-      <Button
-        size="sm"
-        variant="flat"
-        color={purityColor}
-        isLoading={purityChecking}
-        onPress={() => onPurity(proxy)}
-        className="h-5 min-w-0 px-1.5 text-[10px]"
-      >
-        {purity ? `${t('proxies.purity.short')}${purity.score}` : t('proxies.purity.check')}
-      </Button>
-    </Tooltip>
-  ) : null
+  const purityButton =
+    onPurity && !('all' in proxy) ? (
+      <Tooltip content={<span className="whitespace-pre-line text-xs">{purityTooltip}</span>}>
+        <Button
+          size="sm"
+          variant="flat"
+          color={purityColor}
+          isLoading={purityChecking}
+          onPress={() => onPurity(proxy)}
+          className="h-5 min-w-0 px-1.5 text-[10px]"
+        >
+          {purity ? `${t('proxies.purity.short')}${purity.score}` : t('proxies.purity.check')}
+        </Button>
+      </Tooltip>
+    ) : null
 
   return (
     <Card
