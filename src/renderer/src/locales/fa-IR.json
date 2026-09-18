@@ -882,7 +882,7 @@
   "mihomo.ipPurity.proxycheckKey": "کلید API proxycheck.io",
   "mihomo.ipPurity.proxycheckKeyPlaceholder": "اختیاری؛ خالی برای سهمیه ناشناس",
   "mihomo.ipPurity.scamalyticsEndpoint": "نشانی API Scamalytics",
-  "mihomo.ipPurity.scamalyticsEndpointPlaceholder": "اختیاری؛ در حالت خالی از صفحه عمومی استفاده می‌شود. {ip} / {key}",
+  "mihomo.ipPurity.scamalyticsEndpointPlaceholder": "اختیاری؛ نشانی API ارائه‌شده توسط Scamalytics. پشتیبانی از {ip} / {key}",
   "mihomo.ipPurity.scamalyticsKey": "کلید API Scamalytics",
   "mihomo.ipPurity.scamalyticsKeyPlaceholder": "برای API سفارشی Scamalytics",
   "mihomo.ipPurity.cacheHours": "کش پاکی IP",
