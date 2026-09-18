@@ -119,9 +119,8 @@ describe('IP purity cache restoration', () => {
   })
 
   it('restores failure display state without blocking an explicit retry', async () => {
-    mocks.httpGet
-      .mockResolvedValueOnce({ data: { ip: IP } })
-      .mockRejectedValueOnce(new Error('offline'))
+    mocks.httpGet.mockResolvedValueOnce({ data: { ip: IP } })
+    mocks.httpGet.mockRejectedValueOnce(new Error('offline'))
     await expect(mihomoProxyPurity('Singapore')).rejects.toThrow('offline')
     const expected = { ...emptyState, failed: ['Singapore'] }
     expect(await getProxyPurityState()).toEqual(expected)
@@ -172,11 +171,10 @@ describe('IP purity cache restoration', () => {
 
 describe('valid zero scores versus missing or failed results', () => {
   it('preserves a real zero purity result when the provider reports risk 100', async () => {
-    mocks.httpGet
-      .mockResolvedValueOnce({ data: { ip: IP } })
-      .mockResolvedValueOnce({
-        data: { status: 'ok', [IP]: { detections: { risk: 100, proxy: true } } }
-      })
+    mocks.httpGet.mockResolvedValueOnce({ data: { ip: IP } })
+    mocks.httpGet.mockResolvedValueOnce({
+      data: { status: 'ok', [IP]: { detections: { risk: 100, proxy: true } } }
+    })
     const result = await mihomoProxyPurity('Proxy')
     expect(result.score).toBe(0)
     expect(result.proxycheck?.riskScore).toBe(100)
@@ -185,27 +183,26 @@ describe('valid zero scores versus missing or failed results', () => {
   })
 
   it('accepts a numeric zero risk score without treating it as missing', async () => {
-    mocks.httpGet
-      .mockResolvedValueOnce({ data: { ip: IP } })
-      .mockResolvedValueOnce({ data: { [IP]: { detections: { risk: 0 } } } })
+    mocks.httpGet.mockResolvedValueOnce({ data: { ip: IP } })
+    mocks.httpGet.mockResolvedValueOnce({ data: { [IP]: { detections: { risk: 0 } } } })
     expect((await mihomoProxyPurity('Singapore')).score).toBe(100)
   })
 
   it.each(['', ' ', null, undefined, -1, 101, 'invalid', NaN, Infinity])(
     'does not fabricate a score for invalid risk %s',
     async (risk) => {
-      mocks.httpGet
-        .mockResolvedValueOnce({ data: { ip: IP } })
-        .mockResolvedValueOnce({ data: { [IP]: { detections: { risk } } } })
+      mocks.httpGet.mockResolvedValueOnce({ data: { ip: IP } })
+      mocks.httpGet.mockResolvedValueOnce({ data: { [IP]: { detections: { risk } } } })
       await expect(mihomoProxyPurity('Singapore')).rejects.toThrow('unsupported response')
       expect(await getProxyPurityState()).toEqual({ ...emptyState, failed: ['Singapore'] })
     }
   )
 
   it('does not accept an API error body as a valid zero risk result', async () => {
-    mocks.httpGet
-      .mockResolvedValueOnce({ data: { ip: IP } })
-      .mockResolvedValueOnce({ data: { status: 'error', [IP]: { detections: { risk: 0 } } } })
+    mocks.httpGet.mockResolvedValueOnce({ data: { ip: IP } })
+    mocks.httpGet.mockResolvedValueOnce({
+      data: { status: 'error', [IP]: { detections: { risk: 0 } } }
+    })
     await expect(mihomoProxyPurity('Singapore')).rejects.toThrow('unsupported response')
     expect((await getProxyPurityState()).results).toEqual({})
   })
