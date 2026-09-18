@@ -894,5 +894,11 @@
     "previewFailed": "外掛檔案無效",
     "outdatedFile": "該外掛檔案格式已過期，請從機場重新取得",
     "fileTooLarge": "外掛檔案過大"
-  }
+  },
+  "proxies.purity.check": "檢測",
+  "proxies.purity.short": "淨",
+  "proxies.purity.clickToCheck": "點擊檢測 IP 純淨度",
+  "proxies.purity.ip": "出口 IP",
+  "proxies.purity.score": "綜合純淨度",
+  "proxies.purity.checkGroup": "檢測目前代理群組 IP 純淨度"
 }
