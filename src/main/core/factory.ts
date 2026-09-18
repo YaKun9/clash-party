@@ -27,6 +27,11 @@ import { decryptAgeContent } from '../utils/age'
 import { DEFAULT_CONTROL_DNS, DEFAULT_CONTROL_SNIFF } from '../../shared/appConfig'
 import { atomicWriteFile } from '../utils/safeFile'
 import { evaluateDnsOverrideGuard, type DnsOverrideGuardResult } from './dnsOverrideGuard'
+import {
+  ensureIpPurityPort,
+  IP_PURITY_GROUP_NAME,
+  IP_PURITY_LISTENER_NAME
+} from './ipPurityRuntime'
 
 const factoryLogger = createLogger('Factory')
 const SMART_OVERRIDE_ID = 'smart-core-override'
@@ -50,6 +55,45 @@ export interface GenerateProfileResult {
   profileId: string | undefined
   // 随本次配置成功应用后同步。
   dnsGuard: DnsOverrideGuardResult
+}
+
+
+async function injectIpPurityRuntime(profile: IMihomoConfig, enabled: boolean): Promise<void> {
+  const runtime = profile as IMihomoConfig & {
+    'proxy-groups'?: Record<string, unknown>[]
+    listeners?: Record<string, unknown>[]
+  }
+
+  const groups = Array.isArray(runtime['proxy-groups']) ? runtime['proxy-groups'] : []
+  const listeners = Array.isArray(runtime.listeners) ? runtime.listeners : []
+
+  runtime['proxy-groups'] = groups.filter((group) => group?.name !== IP_PURITY_GROUP_NAME)
+  runtime.listeners = listeners.filter((listener) => listener?.name !== IP_PURITY_LISTENER_NAME)
+
+  if (!enabled) return
+
+  const port = await ensureIpPurityPort()
+  runtime['proxy-groups'] = [
+    ...runtime['proxy-groups'],
+    {
+      name: IP_PURITY_GROUP_NAME,
+      type: 'select',
+      'include-all': true,
+      hidden: true
+    }
+  ]
+  runtime.listeners = [
+    ...runtime.listeners,
+    {
+      name: IP_PURITY_LISTENER_NAME,
+      type: 'mixed',
+      port,
+      listen: '127.0.0.1',
+      proxy: IP_PURITY_GROUP_NAME,
+      udp: false,
+      users: []
+    }
+  ]
 }
 
 export async function globalOverrideIdsNow(): Promise<string[]> {
@@ -221,6 +265,7 @@ export async function generateProfile(
   }
   const nextRuntimeConfigStr = stringify(profile)
   const coreProfile = { ...profile }
+  await injectIpPurityRuntime(coreProfile, appConfig.ipPurityEnabled !== false)
   // 日志解析启动检测需要基础日志；预览和 Gist 保留用户的实际配置。
   if (['info', 'debug'].includes(coreProfile['log-level']) === false) {
     coreProfile['log-level'] = 'info'
