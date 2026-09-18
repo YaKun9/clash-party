@@ -894,5 +894,11 @@
     "previewFailed": "插件文件无效",
     "outdatedFile": "该插件文件格式已过期，请从机场重新获取",
     "fileTooLarge": "插件文件过大"
-  }
+  },
+  "proxies.purity.check": "检测",
+  "proxies.purity.short": "净",
+  "proxies.purity.clickToCheck": "点击检测 IP 纯净度",
+  "proxies.purity.ip": "出口 IP",
+  "proxies.purity.score": "综合纯净度",
+  "proxies.purity.checkGroup": "检测当前代理组 IP 纯净度"
 }
