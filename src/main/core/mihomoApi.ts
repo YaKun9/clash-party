@@ -12,6 +12,7 @@ import { createLogger } from '../utils/logger'
 import { mihomoWorkConfigPath } from '../utils/dirs'
 import { generateProfile, getRuntimeConfig } from './factory'
 import { syncControlDnsAfterApply } from './dnsOverrideGuard'
+import { IP_PURITY_GROUP_NAME } from './ipPurityRuntime'
 import { getMihomoIpcPath, hasCoreProcess, restartCore } from './manager'
 
 const mihomoApiLogger = createLogger('MihomoApi')
@@ -341,6 +342,7 @@ export const mihomoGroups = async (includeHidden = false): Promise<IMihomoMixedG
   const groups: IMihomoMixedGroup[] = []
   rawGroups.forEach(({ group }) => {
     const newAll = (group.all || [])
+      .filter((name) => name !== IP_PURITY_GROUP_NAME)
       .map((name) => proxies.proxies[name] || providerProxies[name])
       .filter((proxy): proxy is IMihomoProxy | IMihomoGroup => Boolean(proxy))
     groups.push({ ...group, all: newAll })
