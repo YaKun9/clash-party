@@ -1,4 +1,4 @@
-import { Button, Card, CardBody } from '@heroui/react'
+import { Button, Card, CardBody, Tooltip } from '@heroui/react'
 import { mihomoUnfixedProxy } from '@renderer/utils/ipc'
 import React, { useMemo, useState, useCallback } from 'react'
 import { FaMapPin } from 'react-icons/fa6'
@@ -14,6 +14,9 @@ interface Props {
   onSelect: (group: string, proxy: string) => void
   selected: boolean
   isGroupTesting?: boolean
+  purity?: IProxyPurityResult
+  purityChecking?: boolean
+  onPurity?: (proxy: IMihomoProxy | IMihomoGroup) => void
 }
 
 function delayColor(delay: number): 'primary' | 'success' | 'warning' | 'danger' {
@@ -33,7 +36,10 @@ const ProxyItemBase: React.FC<Props> = (props) => {
     selected,
     onSelect,
     onProxyDelay,
-    isGroupTesting = false
+    isGroupTesting = false,
+    purity,
+    purityChecking = false,
+    onPurity
   } = props
 
   const delay = useMemo(() => {
@@ -62,6 +68,47 @@ const ProxyItemBase: React.FC<Props> = (props) => {
   }, [proxy, group.testUrl, onProxyDelay, mutateProxies])
 
   const fixed = useMemo(() => group.fixed && group.fixed === proxy.name, [group.fixed, proxy.name])
+
+  const purityColor = useMemo((): 'success' | 'warning' | 'danger' | 'default' => {
+    if (!purity) return 'default'
+    if (purity.score >= 85) return 'success'
+    if (purity.score >= 65) return 'warning'
+    return 'danger'
+  }, [purity])
+
+  const purityTooltip = useMemo(() => {
+    if (!purity) return t('proxies.purity.clickToCheck')
+    const parts = [
+      `${t('proxies.purity.ip')}: ${purity.ip}`,
+      `${t('proxies.purity.score')}: ${purity.score}`
+    ]
+    if (purity.scamalytics) {
+      parts.push(`Scamalytics: ${purity.scamalytics.score}/100`)
+    }
+    if (purity.proxycheck) {
+      parts.push(`proxycheck.io: ${purity.proxycheck.riskScore}/100`)
+      if (purity.proxycheck.vpn) parts.push('VPN')
+      if (purity.proxycheck.proxy) parts.push('Proxy')
+      if (purity.proxycheck.tor) parts.push('Tor')
+      if (purity.proxycheck.compromised) parts.push('Compromised')
+    }
+    return parts.join('\n')
+  }, [purity, t])
+
+  const purityButton = onPurity ? (
+    <Tooltip content={<span className="whitespace-pre-line text-xs">{purityTooltip}</span>}>
+      <Button
+        size="sm"
+        variant="flat"
+        color={purityColor}
+        isLoading={purityChecking}
+        onPress={() => onPurity(proxy)}
+        className="h-5 min-w-0 px-1.5 text-[10px]"
+      >
+        {purity ? `${t('proxies.purity.short')}${purity.score}` : t('proxies.purity.check')}
+      </Button>
+    </Tooltip>
+  ) : null
 
   return (
     <Card
@@ -120,6 +167,7 @@ const ProxyItemBase: React.FC<Props> = (props) => {
                       </div>
                     )
                 )}
+                {purityButton}
               </div>
               <Button
                 isIconOnly
@@ -141,7 +189,8 @@ const ProxyItemBase: React.FC<Props> = (props) => {
                 {proxy.name}
               </div>
             </div>
-            <div className="flex justify-end">
+            <div className="flex justify-end items-center gap-1">
+              {purityButton}
               {fixed && (
                 <Button
                   isIconOnly
@@ -184,7 +233,9 @@ const ProxyItem = React.memo(ProxyItemBase, (prevProps, nextProps) => {
     prevProps.selected === nextProps.selected &&
     prevProps.proxyDisplayMode === nextProps.proxyDisplayMode &&
     prevProps.group.fixed === nextProps.group.fixed &&
-    prevProps.isGroupTesting === nextProps.isGroupTesting
+    prevProps.isGroupTesting === nextProps.isGroupTesting &&
+    prevProps.purity === nextProps.purity &&
+    prevProps.purityChecking === nextProps.purityChecking
   )
 })
 
