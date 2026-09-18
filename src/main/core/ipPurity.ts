@@ -68,11 +68,26 @@ function asBoolean(value: unknown): boolean | undefined {
 function parseScamalytics(data: unknown): IProxyPurityProviderScamalytics | undefined {
   if (!data || typeof data !== 'object') return undefined
   const obj = data as Record<string, unknown>
-  const score = asNumber(obj.score ?? obj.fraud_score)
+  const nested =
+    obj.scamalytics && typeof obj.scamalytics === 'object'
+      ? (obj.scamalytics as Record<string, unknown>)
+      : obj
+
+  const score = asNumber(
+    nested.scamalytics_score ?? nested.score ?? nested.fraud_score ?? obj.score ?? obj.fraud_score
+  )
   if (score === undefined) return undefined
+
+  const risk =
+    typeof nested.scamalytics_risk === 'string'
+      ? nested.scamalytics_risk
+      : typeof nested.risk === 'string'
+        ? nested.risk
+        : undefined
+
   return {
     score: Math.max(0, Math.min(100, score)),
-    risk: typeof obj.risk === 'string' ? obj.risk : undefined
+    risk
   }
 }
 
