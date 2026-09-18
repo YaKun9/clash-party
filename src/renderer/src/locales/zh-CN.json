@@ -905,7 +905,7 @@
   "mihomo.ipPurity.proxycheckKey": "proxycheck.io API Key",
   "mihomo.ipPurity.proxycheckKeyPlaceholder": "可选；留空使用匿名额度",
   "mihomo.ipPurity.scamalyticsEndpoint": "Scamalytics API 地址",
-  "mihomo.ipPurity.scamalyticsEndpointPlaceholder": "可选；留空使用公共查询页，可用 {ip} / {key} 占位",
+  "mihomo.ipPurity.scamalyticsEndpointPlaceholder": "可选；填写 Scamalytics 提供的 API 地址，可用 {ip} / {key} 占位",
   "mihomo.ipPurity.scamalyticsKey": "Scamalytics API Key",
   "mihomo.ipPurity.scamalyticsKeyPlaceholder": "使用自定义 API 地址时填写",
   "mihomo.ipPurity.cacheHours": "纯净度缓存时间",
