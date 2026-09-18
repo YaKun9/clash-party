@@ -894,5 +894,11 @@
     "previewFailed": "Invalid plugin file",
     "outdatedFile": "This plugin file format is outdated; please obtain the new one from your provider",
     "fileTooLarge": "Plugin file is too large"
-  }
+  },
+  "proxies.purity.check": "Check",
+  "proxies.purity.short": "Clean ",
+  "proxies.purity.clickToCheck": "Check IP purity",
+  "proxies.purity.ip": "Exit IP",
+  "proxies.purity.score": "Purity score",
+  "proxies.purity.checkGroup": "Check IP purity for this proxy group"
 }
