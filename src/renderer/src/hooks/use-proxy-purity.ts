@@ -1,6 +1,6 @@
 import { useCallback, useMemo } from 'react'
 import useSWR from 'swr'
-import { mihomoProxyPurity } from '@renderer/utils/ipc'
+import { mihomoProxyPurity, mihomoGroupPurity } from '@renderer/utils/ipc'
 import {
   getProxyPurityState,
   toProxyPurityResults,
@@ -11,6 +11,7 @@ export function useProxyPurity(): {
   purityResults: Record<string, ProxyPurityDisplayResult>
   purityChecking: Set<string>
   onProxyPurity: (proxy: IMihomoProxy | IMihomoGroup) => Promise<void>
+  onProxiesPurity: (proxies: (IMihomoProxy | IMihomoGroup)[]) => Promise<void>
 } {
   const { data, mutate } = useSWR('proxyPurityState', getProxyPurityState, {
     // Always restore from the authoritative cache after a route remount/renderer reload.
@@ -27,7 +28,7 @@ export function useProxyPurity(): {
 
   const onProxyPurity = useCallback(
     async (proxy: IMihomoProxy | IMihomoGroup): Promise<void> => {
-      const request = mihomoProxyPurity(proxy.name)
+      const request = mihomoProxyPurity(proxy.name, true)
       // The main process owns pending state and deduplicates repeated node requests.
       void refresh().catch(console.error)
       try {
@@ -44,7 +45,24 @@ export function useProxyPurity(): {
     [refresh]
   )
 
+  const onProxiesPurity = useCallback(
+    async (proxies: (IMihomoProxy | IMihomoGroup)[]): Promise<void> => {
+      const request = mihomoGroupPurity(
+        proxies.filter((proxy) => !('all' in proxy)).map((proxy) => proxy.name)
+      )
+      void refresh().catch(console.error)
+      try {
+        await request
+      } catch {
+        /* Per-node errors stay inline. */
+      } finally {
+        await refresh().catch(console.error)
+      }
+    },
+    [refresh]
+  )
+
   const purityResults = useMemo(() => toProxyPurityResults(data), [data])
   const purityChecking = useMemo(() => new Set(data?.checking ?? []), [data?.checking])
-  return { purityResults, purityChecking, onProxyPurity }
+  return { purityResults, purityChecking, onProxyPurity, onProxiesPurity }
 }

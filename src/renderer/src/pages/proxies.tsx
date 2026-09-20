@@ -166,7 +166,7 @@ const Proxies: React.FC = () => {
     Array.from({ length: groups.length }, () => new Set<string>())
   )
   const [searchValue, setSearchValue] = useState(Array(groups.length).fill(''))
-  const { purityResults, purityChecking, onProxyPurity } = useProxyPurity()
+  const { purityResults, purityChecking, onProxyPurity, onProxiesPurity } = useProxyPurity()
 
   // searchValue 初始化
   useEffect(() => {
@@ -269,11 +269,9 @@ const Proxies: React.FC = () => {
     async (index: number): Promise<void> => {
       const proxies = groups[index]?.all ?? []
       // Queue all nodes; the main process limits concurrency across every group.
-      await Promise.allSettled(
-        proxies.filter((proxy) => !('all' in proxy)).map((proxy) => onProxyPurity(proxy))
-      )
+      await onProxiesPurity(proxies)
     },
-    [groups, onProxyPurity]
+    [groups, onProxiesPurity]
   )
 
   // 组测速时逐节点写回会造成 O(N²) 分配与 N 次 allProxies 重算

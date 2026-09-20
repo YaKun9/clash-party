@@ -43,18 +43,35 @@ export function ipPurityCacheMs(hours: unknown): number {
 }
 
 function fresh(at: unknown, ttl: number): at is number {
-  return typeof at === 'number' && Number.isFinite(at) && at > 0 &&
-    at <= Date.now() && Date.now() - at < ttl
+  return (
+    typeof at === 'number' &&
+    Number.isFinite(at) &&
+    at > 0 &&
+    at <= Date.now() &&
+    Date.now() - at < ttl
+  )
 }
 
 function decodeRecord(value: unknown): IpPurityRecord | undefined {
-  if (!object(value) || typeof value.sourceKey !== 'string' ||
-    !/^[a-f0-9]{64}$/.test(value.sourceKey) || !score(value.score) ||
-    !fresh(value.checkedAt, MAX_AGE_MS)) return undefined
+  if (
+    !object(value) ||
+    typeof value.sourceKey !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(value.sourceKey) ||
+    !score(value.score) ||
+    !fresh(value.checkedAt, MAX_AGE_MS)
+  )
+    return undefined
   let ip: string
-  try { ip = canonicalExitIp(value.ip) } catch { return undefined }
+  try {
+    ip = canonicalExitIp(value.ip)
+  } catch {
+    return undefined
+  }
   const result: IpPurityRecord = {
-    ip, sourceKey: value.sourceKey, score: value.score, checkedAt: value.checkedAt
+    ip,
+    sourceKey: value.sourceKey,
+    score: value.score,
+    checkedAt: value.checkedAt
   }
   if (object(value.scamalytics) && score(value.scamalytics.score)) {
     result.scamalytics = { score: value.scamalytics.score }
@@ -96,17 +113,29 @@ export class IpPurityCache {
     try {
       if ((await stat(this.filePath())).size > MAX_FILE_BYTES) return
       const value: unknown = JSON.parse(await readFile(this.filePath(), 'utf8'))
-      if (!object(value) || value.version !== 1 || !object(value.byIp) || !object(value.nodes)) return
+      if (!object(value) || value.version !== 1 || !object(value.byIp) || !object(value.nodes))
+        return
       for (const [key, raw] of Object.entries(value.byIp).slice(-MAX_ENTRIES)) {
         const entry = decodeRecord(raw)
         if (entry && canonicalExitIp(key) === entry.ip) this.ips.set(entry.ip, entry)
       }
       for (const raw of Object.values(value.nodes).slice(-MAX_ENTRIES)) {
-        if (!object(raw) || typeof raw.scope !== 'string' || raw.scope.length > 1024 ||
-          typeof raw.proxy !== 'string' || raw.proxy.length > 1024 ||
-          typeof raw.ip !== 'string' || !fresh(raw.probedAt, MAX_AGE_MS)) continue
+        if (
+          !object(raw) ||
+          typeof raw.scope !== 'string' ||
+          raw.scope.length > 1024 ||
+          typeof raw.proxy !== 'string' ||
+          raw.proxy.length > 1024 ||
+          typeof raw.ip !== 'string' ||
+          !fresh(raw.probedAt, MAX_AGE_MS)
+        )
+          continue
         let ip: string
-        try { ip = canonicalExitIp(raw.ip) } catch { continue }
+        try {
+          ip = canonicalExitIp(raw.ip)
+        } catch {
+          continue
+        }
         if (!this.ips.has(ip)) continue
         const mapping = { scope: raw.scope, proxy: raw.proxy, ip, probedAt: raw.probedAt }
         this.nodes.set(this.nodeKey(mapping.scope, mapping.proxy), mapping)
@@ -146,14 +175,23 @@ export class IpPurityCache {
     this.nodes.delete(this.nodeKey(scope, proxy))
   }
 
-  result(scope: string, proxy: string, sourceKey: string, ttl: number): IProxyPurityResult | undefined {
+  result(
+    scope: string,
+    proxy: string,
+    sourceKey: string,
+    ttl: number
+  ): IProxyPurityResult | undefined {
     const node = this.nodes.get(this.nodeKey(scope, proxy))
     if (!node || !fresh(node.probedAt, ttl)) return undefined
     const entry = this.getIp(node.ip, sourceKey, ttl)
     if (!entry) return undefined
     return {
-      proxy, ip: entry.ip, score: entry.score, checkedAt: entry.checkedAt,
-      scamalytics: entry.scamalytics, proxycheck: entry.proxycheck
+      proxy,
+      ip: entry.ip,
+      score: entry.score,
+      checkedAt: entry.checkedAt,
+      scamalytics: entry.scamalytics,
+      proxycheck: entry.proxycheck
     }
   }
 
@@ -180,7 +218,11 @@ export class IpPurityCache {
         if (!this.ips.has(node.ip) || !fresh(node.probedAt, MAX_AGE_MS)) this.nodes.delete(key)
       }
       while (this.nodes.size > MAX_ENTRIES) this.nodes.delete(this.nodes.keys().next().value!)
-      const value = { version: 1, byIp: Object.fromEntries(this.ips), nodes: Object.fromEntries(this.nodes) }
+      const value = {
+        version: 1,
+        byIp: Object.fromEntries(this.ips),
+        nodes: Object.fromEntries(this.nodes)
+      }
       await mkdir(dirname(this.filePath()), { recursive: true })
       await atomicWriteFile(this.filePath(), JSON.stringify(value), { mode: 0o600 })
     })

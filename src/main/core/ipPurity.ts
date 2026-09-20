@@ -1,5 +1,14 @@
 import axios from 'axios'
-import { getAppConfig } from '../config'
+import { getAppConfig, getProfileConfig } from '../config'
+import { createHash } from 'crypto'
+import { join } from 'path'
+import { dataDir } from '../utils/dirs'
+import {
+  IpPurityCache,
+  canonicalExitIp,
+  ipPurityCacheMs,
+  type IpPurityRecord
+} from './ipPurityCache'
 import { getAxios } from './mihomoApi'
 import { ensureIpPurityPort, ipPurityGroupName, IP_PURITY_CONCURRENCY } from './ipPurityRuntime'
 import { IpPurityPool } from './ipPurityPool'
@@ -12,28 +21,59 @@ interface ProxyCheckV3Response {
   [ip: string]: unknown
 }
 
-interface CachedPurity {
-  result: IProxyPurityResult
-  expiresAt: number
+interface CheckContext {
+  config: IAppConfig
+  scope: string
+  sourceKey: string
+  ttl: number
+  generation: number
 }
 
-const proxyCache = new Map<string, CachedPurity>()
-const pendingChecks = new Map<string, Promise<IProxyPurityResult>>()
-// Last-attempt display state only: failures never prevent an explicit retry.
-const failedChecks = new Set<string>()
-let cacheGeneration = 0
-const ipProviderCache = new Map<
-  string,
-  {
-    expiresAt: number
-    scamalytics?: IProxyPurityProviderScamalytics
-    proxycheck?: IProxyPurityProviderProxyCheck
-    warnings?: string[]
-  }
->()
+interface PendingCheck {
+  scope: string
+  proxy: string
+  generation: number
+  promise: Promise<IProxyPurityResult>
+}
 
+const cache = new IpPurityCache(() => join(dataDir(), 'ip-purity-cache.json'))
+const pendingChecks = new Map<string, PendingCheck>()
+const failedChecks = new Map<string, { scope: string; proxy: string }>()
 const purityPool = new IpPurityPool(IP_PURITY_CONCURRENCY)
-const providerRequests = new Map<string, ReturnType<typeof performProviderQuery>>()
+const providerRequests = new Map<string, Promise<IpPurityRecord>>()
+let cacheGeneration = 0
+
+async function context(generation = cacheGeneration): Promise<CheckContext> {
+  const [config, profile] = await Promise.all([getAppConfig(), getProfileConfig()])
+  await cache.load()
+  // Persist a fingerprint only, never credentials or endpoint URLs.
+  // Changing providers/credentials cannot reuse the old combined score.
+  const sourceKey = createHash('sha256')
+    .update(
+      JSON.stringify([
+        config.ipPurityProxycheckApiKey ?? '',
+        config.ipPurityScamalyticsEndpoint ?? '',
+        config.ipPurityScamalyticsApiKey ?? ''
+      ])
+    )
+    .digest('hex')
+  return {
+    config,
+    sourceKey,
+    generation,
+    scope: JSON.stringify([profile.current ?? 'default', sourceKey]),
+    ttl: ipPurityCacheMs(config.ipPurityCacheHours)
+  }
+}
+
+async function persistCache(): Promise<void> {
+  try {
+    await cache.save()
+  } catch {
+    // A disk error must not turn a valid API response into a network timeout.
+    console.warn('IP purity result is in memory but could not be saved locally')
+  }
+}
 
 function buildScamalyticsUrl(endpoint: string, key: string, ip: string): string {
   const encodedIp = encodeURIComponent(ip)
@@ -179,30 +219,11 @@ async function discoverExitIp(proxy: string, slot: number): Promise<string> {
   })
 
   const ip = response.data?.ip?.trim()
-  if (!ip) throw new Error('Failed to resolve node exit IP')
-  return ip
+  return canonicalExitIp(ip)
 }
 
-async function performProviderQuery(
-  ip: string,
-  cacheMs: number,
-  generation: number
-): Promise<{
-  scamalytics?: IProxyPurityProviderScamalytics
-  proxycheck?: IProxyPurityProviderProxyCheck
-  warnings: string[]
-}> {
-  const now = Date.now()
-  const cached = ipProviderCache.get(ip)
-  if (cached && cached.expiresAt > now) {
-    return {
-      scamalytics: cached.scamalytics,
-      proxycheck: cached.proxycheck,
-      warnings: cached.warnings ?? []
-    }
-  }
-
-  const config = await getAppConfig()
+async function performProviderQuery(ip: string, ctx: CheckContext): Promise<IpPurityRecord> {
+  const config = ctx.config
   const warnings: string[] = []
   let scamalytics: IProxyPurityProviderScamalytics | undefined
   let proxycheck: IProxyPurityProviderProxyCheck | undefined
@@ -249,126 +270,149 @@ async function performProviderQuery(
 
   await Promise.all(requests)
 
-  // Clearing the cache must not be undone by an older in-flight request.
-  // Failed lookups are not valid cached results and must remain retryable.
-  if (generation === cacheGeneration && (scamalytics || proxycheck)) {
-    ipProviderCache.set(ip, {
-      expiresAt: now + cacheMs,
-      scamalytics,
-      proxycheck,
-      warnings
-    })
+  if (!scamalytics && !proxycheck) {
+    throw new Error(warnings[0] || 'No IP purity provider returned a result')
   }
-
-  return { scamalytics, proxycheck, warnings }
+  return {
+    ip,
+    sourceKey: ctx.sourceKey,
+    checkedAt: Date.now(),
+    score: calculatePurityScore(scamalytics, proxycheck),
+    scamalytics,
+    proxycheck
+  }
 }
 
-// Simultaneous nodes with the same exit IP share one in-flight lookup.
-// Include the cache generation so clearing/retrying cannot reuse an old request.
+type BatchLookups = Map<string, Promise<IpPurityRecord>>
+
 function queryProviders(
   ip: string,
-  cacheMs: number,
-  generation: number
-): ReturnType<typeof performProviderQuery> {
-  const key = `${generation}:${ip}`
-  const pending = providerRequests.get(key)
-  if (pending) return pending
-  const request = performProviderQuery(ip, cacheMs, generation).finally(() => {
-    if (providerRequests.get(key) === request) providerRequests.delete(key)
-  })
-  providerRequests.set(key, request)
+  ctx: CheckContext,
+  force: boolean,
+  batch?: BatchLookups
+): Promise<IpPurityRecord> {
+  // A manual group refresh queries each IP once, including nodes that
+  // start after an earlier worker has completed. Failed lookups also
+  // stay deduplicated within that batch, but can be retried next time.
+  const shared = batch?.get(ip)
+  if (shared) return shared
+  const key = `${ctx.generation}:${ctx.sourceKey}:${ip}`
+  let request = providerRequests.get(key)
+  if (!request) {
+    const cached = !force ? cache.getIp(ip, ctx.sourceKey, ctx.ttl) : undefined
+    if (cached) return Promise.resolve(cached)
+    request = performProviderQuery(ip, ctx)
+      .then((entry) => {
+        if (ctx.generation === cacheGeneration) cache.setIp(entry)
+        return entry
+      })
+      .finally(() => {
+        if (providerRequests.get(key) === request) providerRequests.delete(key)
+      })
+    providerRequests.set(key, request)
+  }
+  batch?.set(ip, request)
   return request
 }
 
 async function checkProxyPurity(
   proxy: string,
-  generation: number,
-  slot: number
+  ctx: CheckContext,
+  slot: number,
+  force: boolean,
+  batch?: BatchLookups
 ): Promise<IProxyPurityResult> {
-  const config = await getAppConfig()
-  if (config.ipPurityEnabled === false) {
-    throw new Error('IP purity checking is disabled')
-  }
-  if (generation !== cacheGeneration) {
+  if (ctx.config.ipPurityEnabled === false) throw new Error('IP purity checking is disabled')
+  if (ctx.generation !== cacheGeneration)
     throw new Error('IP purity cache was cleared; start a new check')
-  }
-
-  const cacheHours = Math.max(0.25, Math.min(168, config.ipPurityCacheHours ?? 24))
-  const cacheMs = cacheHours * 60 * 60 * 1000
-  const now = Date.now()
-  const cached = proxyCache.get(proxy)
-  if (cached && cached.expiresAt > now) return cached.result
-
+  const restored = !force ? cache.result(ctx.scope, proxy, ctx.sourceKey, ctx.ttl) : undefined
+  if (restored) return restored
+  // Manual refresh always re-probes: the same node name may now use a
+  // different exit. Cache reads/page mounts never perform this probe.
   const ip = await discoverExitIp(proxy, slot)
-  const providers = await queryProviders(ip, cacheMs, generation)
-
-  if (!providers.scamalytics && !providers.proxycheck) {
-    throw new Error(providers.warnings[0] || 'No IP purity provider returned a result')
+  if (ctx.generation !== cacheGeneration)
+    throw new Error('IP purity cache was cleared; start a new check')
+  const entry = await queryProviders(ip, ctx, force, batch)
+  if (ctx.generation === cacheGeneration) {
+    cache.remember(ctx.scope, proxy, ip)
+    await persistCache()
   }
-  const score = calculatePurityScore(providers.scamalytics, providers.proxycheck)
-
-  const result: IProxyPurityResult = {
+  return {
     proxy,
     ip,
-    score,
-    checkedAt: Date.now(),
-    scamalytics: providers.scamalytics,
-    proxycheck: providers.proxycheck,
-    warnings: providers.warnings.length > 0 ? providers.warnings : undefined
+    checkedAt: entry.checkedAt,
+    score: entry.score,
+    scamalytics: entry.scamalytics,
+    proxycheck: entry.proxycheck
   }
-
-  if (generation === cacheGeneration) {
-    proxyCache.set(proxy, { result, expiresAt: Date.now() + cacheMs })
-  }
-  return result
 }
 
-// Read-only IPC snapshot: restoring a page must never spend a provider API request.
+function startCheck(
+  proxy: string,
+  ctx: CheckContext,
+  force: boolean,
+  batch?: BatchLookups
+): Promise<IProxyPurityResult> {
+  if (typeof proxy !== 'string' || !proxy || proxy.length > 1024) {
+    return Promise.reject(new Error('Invalid node name'))
+  }
+  const nodeKey = cache.nodeKey(ctx.scope, proxy)
+  const key = `${ctx.generation}:${nodeKey}`
+  const pending = pendingChecks.get(key)
+  if (pending) return pending.promise
+  failedChecks.delete(nodeKey)
+  const promise = purityPool
+    .run((slot) => checkProxyPurity(proxy, ctx, slot, force, batch))
+    .catch(async (error: unknown) => {
+      if (ctx.generation === cacheGeneration) {
+        cache.forget(ctx.scope, proxy)
+        failedChecks.set(nodeKey, { scope: ctx.scope, proxy })
+        await persistCache()
+      }
+      throw error
+    })
+    .finally(() => {
+      if (pendingChecks.get(key)?.promise === promise) pendingChecks.delete(key)
+    })
+  pendingChecks.set(key, { scope: ctx.scope, proxy, generation: ctx.generation, promise })
+  return promise
+}
+
+// IPC snapshot: local disk/memory only; no node probes or provider requests.
 export async function getProxyPurityState(): Promise<{
   results: Record<string, IProxyPurityResult>
   checking: string[]
   failed: string[]
 }> {
-  const now = Date.now()
-  const entries: [string, IProxyPurityResult][] = []
-  for (const [proxy, cached] of proxyCache) {
-    if (cached.expiresAt > now) entries.push([proxy, cached.result])
-    else proxyCache.delete(proxy)
-  }
+  const ctx = await context()
+  if (ctx.config.ipPurityEnabled === false) return { results: {}, checking: [], failed: [] }
   return {
-    results: Object.fromEntries(entries),
-    checking: [...pendingChecks.keys()],
-    failed: [...failedChecks]
+    results: cache.results(ctx.scope, ctx.sourceKey, ctx.ttl),
+    checking: [...pendingChecks.values()]
+      .filter((task) => task.scope === ctx.scope && task.generation === cacheGeneration)
+      .map((task) => task.proxy),
+    failed: [...failedChecks.values()]
+      .filter((task) => task.scope === ctx.scope)
+      .map((task) => task.proxy)
   }
 }
 
-export function mihomoProxyPurity(proxy: string): Promise<IProxyPurityResult> {
-  const pending = pendingChecks.get(proxy)
-  if (pending) return pending
-
-  failedChecks.delete(proxy)
-  const generation = cacheGeneration
-  const run = purityPool
-    .run((slot) => checkProxyPurity(proxy, generation, slot))
-    .catch((error: unknown) => {
-      if (generation === cacheGeneration) {
-        // Never encode a failed attempt as a zero purity score. Keep the marker
-        // across route changes, without caching the failure as an API response.
-        proxyCache.delete(proxy)
-        failedChecks.add(proxy)
-      }
-      throw error
-    })
-    .finally(() => {
-      if (pendingChecks.get(proxy) === run) pendingChecks.delete(proxy)
-    })
-  pendingChecks.set(proxy, run)
-  return run
+export async function mihomoProxyPurity(proxy: string, force = false): Promise<IProxyPurityResult> {
+  const ctx = await context()
+  return await startCheck(proxy, ctx, force)
 }
 
-export function clearProxyPurityCache(): void {
+export async function mihomoGroupPurity(proxies: string[]): Promise<void> {
+  if (!Array.isArray(proxies) || proxies.length > 5000) throw new Error('Invalid node batch')
+  const ctx = await context()
+  const batch: BatchLookups = new Map()
+  await Promise.allSettled(
+    [...new Set(proxies)].map((proxy) => startCheck(proxy, ctx, true, batch))
+  )
+}
+
+export async function clearProxyPurityCache(): Promise<void> {
   cacheGeneration++
-  proxyCache.clear()
-  ipProviderCache.clear()
   failedChecks.clear()
+  await cache.clear()
 }
