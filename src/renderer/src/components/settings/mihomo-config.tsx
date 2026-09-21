@@ -19,6 +19,7 @@ import { platform, version } from '@renderer/utils/init'
 import { useTranslation } from 'react-i18next'
 import SettingItem from '../base/base-setting-item'
 import SettingCard from '../base/base-setting-card'
+import PurityProviderSettings from './purity-provider-settings'
 
 interface SsidProfileEntry {
   ssid: string
@@ -225,6 +226,7 @@ const MihomoConfig: React.FC = () => {
           }}
         />
       </SettingItem>
+      <PurityProviderSettings />
       <SettingItem title={t('mihomo.ipPurity.scamalyticsEndpoint')} divider>
         <Input
           size="sm"

@@ -1,12 +1,6 @@
 type IpPuritySource = 'abuseipdb' | 'scamalytics' | 'proxycheck' | 'ipapi'
 type IpPuritySourceStatus =
-  | 'ok'
-  | 'unconfigured'
-  | 'timeout'
-  | 'rate_limited'
-  | 'unauthorized'
-  | 'invalid'
-  | 'error'
+  'ok' | 'unconfigured' | 'timeout' | 'rate_limited' | 'unauthorized' | 'invalid' | 'error'
 
 interface IProxyPurityProviderAbuseIPDB {
   abuseConfidenceScore: number

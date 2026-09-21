@@ -141,7 +141,7 @@ describe('IP purity cache restoration', () => {
   it('restores failure display state without blocking an explicit retry', async () => {
     mocks.httpGet.mockResolvedValueOnce({ data: { ip: IP } })
     mocks.httpGet.mockRejectedValueOnce(new Error('offline'))
-    await expect(mihomoProxyPurity('Singapore')).rejects.toThrow('offline')
+    await expect(mihomoProxyPurity('Singapore')).rejects.toThrow('No IP purity provider')
     const expected = { ...emptyState, failed: ['Singapore'] }
     expect(await getProxyPurityState()).toEqual(expected)
     expect(await getProxyPurityState()).toEqual(expected)
@@ -190,10 +190,10 @@ describe('IP purity cache restoration', () => {
 })
 
 describe('valid zero scores versus missing or failed results', () => {
-  it('preserves a real zero purity result when the provider reports risk 100', async () => {
+  it('preserves a real zero purity result for a risk-100 compromised host', async () => {
     mocks.httpGet.mockResolvedValueOnce({ data: { ip: IP } })
     mocks.httpGet.mockResolvedValueOnce({
-      data: { status: 'ok', [IP]: { detections: { risk: 100, proxy: true } } }
+      data: { status: 'ok', [IP]: { detections: { risk: 100, proxy: true, compromised: true } } }
     })
     const result = await mihomoProxyPurity('Proxy')
     expect(result.score).toBe(0)

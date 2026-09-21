@@ -2,12 +2,13 @@ import { mkdir, readFile, stat } from 'fs/promises'
 import { isIP } from 'net'
 import { dirname } from 'path'
 import { atomicWriteFile, WriteQueue } from '../utils/safeFile'
+import { sanitizePurityDetails } from '../../shared/ipPurityScore'
 
 const MAX_AGE_MS = 168 * 60 * 60 * 1000
 const MAX_ENTRIES = 5000
 const MAX_FILE_BYTES = 8 * 1024 * 1024
 
-export interface IpPurityRecord {
+export interface IpPurityRecord extends IpPurityDetails {
   ip: string
   sourceKey: string
   score: number
@@ -73,25 +74,10 @@ function decodeRecord(value: unknown): IpPurityRecord | undefined {
     score: value.score,
     checkedAt: value.checkedAt
   }
-  if (object(value.scamalytics) && score(value.scamalytics.score)) {
-    result.scamalytics = { score: value.scamalytics.score }
-    if (typeof value.scamalytics.risk === 'string') {
-      result.scamalytics.risk = value.scamalytics.risk.slice(0, 128)
-    }
-  }
-  if (object(value.proxycheck) && score(value.proxycheck.riskScore)) {
-    const provider = value.proxycheck
-    const parsed: IProxyPurityProviderProxyCheck = { riskScore: provider.riskScore as number }
-    for (const key of ['proxy', 'vpn', 'tor', 'hosting', 'compromised', 'anonymous'] as const) {
-      if (typeof provider[key] === 'boolean') parsed[key] = provider[key]
-    }
-    for (const key of ['networkType', 'provider', 'country'] as const) {
-      if (typeof provider[key] === 'string') parsed[key] = provider[key].slice(0, 256)
-    }
-    if (score(provider.confidence)) parsed.confidence = provider.confidence
-    result.proxycheck = parsed
-  }
-  return result.scamalytics || result.proxycheck ? result : undefined
+  const details = sanitizePurityDetails(value)
+  return details.scamalytics || details.proxycheck || details.abuseipdb || details.ipapi
+    ? { ...result, ...details }
+    : undefined
 }
 
 // Only successful, sanitized IP results and last-probed mappings are persisted.
@@ -191,7 +177,10 @@ export class IpPurityCache {
       score: entry.score,
       checkedAt: entry.checkedAt,
       scamalytics: entry.scamalytics,
-      proxycheck: entry.proxycheck
+      proxycheck: entry.proxycheck,
+      abuseipdb: entry.abuseipdb,
+      ipapi: entry.ipapi,
+      sourceStatus: entry.sourceStatus
     }
   }
 

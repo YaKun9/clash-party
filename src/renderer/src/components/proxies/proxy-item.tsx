@@ -1,4 +1,5 @@
 import { Button, Card, CardBody, Tooltip } from '@heroui/react'
+import PurityDetails from './purity-details'
 import { mihomoUnfixedProxy } from '@renderer/utils/ipc'
 import type { ProxyPurityDisplayResult } from '@renderer/utils/ip-purity'
 import React, { useMemo, useState, useCallback } from 'react'
@@ -86,31 +87,25 @@ const ProxyItemBase: React.FC<Props> = (props) => {
     return purity ? `${t('proxies.purity.short')}${purity.score}` : t('proxies.purity.check')
   }, [purity, t])
 
-  const purityTooltip = useMemo(() => {
-    if (purity === 'timeout') {
-      return `${t('proxies.purity.score')}: ${t('proxies.delay.timeout')}\n${t('proxies.purity.clickToCheck')}`
-    }
-    if (!purity) return t('proxies.purity.clickToCheck')
-    const parts = [
-      `${t('proxies.purity.ip')}: ${purity.ip}`,
-      `${t('proxies.purity.score')}: ${purity.score}`
-    ]
-    if (purity.scamalytics) {
-      parts.push(`Scamalytics: ${purity.scamalytics.score}/100`)
-    }
-    if (purity.proxycheck) {
-      parts.push(`proxycheck.io: ${purity.proxycheck.riskScore}/100`)
-      if (purity.proxycheck.vpn) parts.push('VPN')
-      if (purity.proxycheck.proxy) parts.push('Proxy')
-      if (purity.proxycheck.tor) parts.push('Tor')
-      if (purity.proxycheck.compromised) parts.push('Compromised')
-    }
-    return parts.join('\n')
-  }, [purity, t])
-
   const purityButton =
     onPurity && !('all' in proxy) ? (
-      <Tooltip content={<span className="whitespace-pre-line text-sm">{purityTooltip}</span>}>
+      <Tooltip
+        delay={250}
+        closeDelay={180}
+        offset={10}
+        placement="top"
+        classNames={{ content: 'p-0 rounded-2xl border border-divider bg-content1 shadow-2xl' }}
+        content={
+          purity && purity !== 'timeout' ? (
+            <PurityDetails result={purity} />
+          ) : (
+            <div className="p-3 text-sm">
+              {purity === 'timeout' ? `${t('proxies.delay.timeout')} · ` : ''}
+              {t('proxies.purity.clickToCheck')}
+            </div>
+          )
+        }
+      >
         <Button
           size="sm"
           variant="light"

@@ -5,14 +5,27 @@ import { parseAbuseIPDB, parseIpapi, queryPuritySources } from './ipPurityProvid
 
 const IP = '203.0.113.11'
 const config = { ipPurityAbuseIPDBApiKey: 'abuse-secret', ipPurityIpapiApiKey: 'ipapi-secret' }
-beforeEach(() => { mocks.get.mockReset(); mocks.post.mockReset() })
+beforeEach(() => {
+  mocks.get.mockReset()
+  mocks.post.mockReset()
+})
 
 describe('additional IP providers', () => {
   it('uses read-only AbuseIPDB CHECK with a header key and POST body for ipapi.is', async () => {
-    mocks.get.mockImplementation(async (url: string) => url.includes('abuseipdb')
-      ? { data: { data: { ipAddress: IP, abuseConfidenceScore: 0, totalReports: 0 } } }
-      : { data: { [IP]: { detections: { risk: 50, vpn: true } } } })
-    mocks.post.mockResolvedValue({ data: { ip: IP, is_abuser: false, is_vpn: true, company: { name: 'Test ISP' }, asn: { asn: 64500 } } })
+    mocks.get.mockImplementation(async (url: string) =>
+      url.includes('abuseipdb')
+        ? { data: { data: { ipAddress: IP, abuseConfidenceScore: 0, totalReports: 0 } } }
+        : { data: { [IP]: { detections: { risk: 50, vpn: true } } } }
+    )
+    mocks.post.mockResolvedValue({
+      data: {
+        ip: IP,
+        is_abuser: false,
+        is_vpn: true,
+        company: { name: 'Test ISP' },
+        asn: { asn: 64500 }
+      }
+    })
     const result = await queryPuritySources(IP, config)
     const abuseCall = mocks.get.mock.calls.find(([url]) => url.includes('abuseipdb'))!
     expect(abuseCall[0]).toBe('https://api.abuseipdb.com/api/v2/check')
@@ -21,7 +34,12 @@ describe('additional IP providers', () => {
     expect(mocks.post.mock.calls[0][1]).toEqual({ q: IP, key: 'ipapi-secret' })
     expect(result.abuseipdb?.abuseConfidenceScore).toBe(0)
     expect(result.ipapi?.asn).toBe(64500)
-    expect(result.sourceStatus).toEqual({ abuseipdb: 'ok', ipapi: 'ok', proxycheck: 'ok', scamalytics: 'unconfigured' })
+    expect(result.sourceStatus).toEqual({
+      abuseipdb: 'ok',
+      ipapi: 'ok',
+      proxycheck: 'ok',
+      scamalytics: 'unconfigured'
+    })
     expect(JSON.stringify(result)).not.toContain('secret')
   })
 
@@ -58,19 +76,33 @@ describe('additional IP providers', () => {
   })
 
   it('rejects wrong-IP and API-error payloads', () => {
-    expect(parseAbuseIPDB(IP, { data: { ipAddress: '203.0.113.12', abuseConfidenceScore: 0 } })).toBeUndefined()
+    expect(
+      parseAbuseIPDB(IP, { data: { ipAddress: '203.0.113.12', abuseConfidenceScore: 0 } })
+    ).toBeUndefined()
     expect(parseIpapi(IP, { ip: '203.0.113.12', is_abuser: false })).toBeUndefined()
     expect(parseIpapi(IP, { error: 'quota exceeded', ip: IP })).toBeUndefined()
-    expect(parseAbuseIPDB(IP, { errors: [], data: { ipAddress: IP, abuseConfidenceScore: 0 } })).toBeUndefined()
+    expect(
+      parseAbuseIPDB(IP, { errors: [], data: { ipAddress: IP, abuseConfidenceScore: 0 } })
+    ).toBeUndefined()
   })
 
   it('does not confuse network-wide abuse ratios with per-IP risk', () => {
-    const result = parseIpapi(IP, { ip: IP, company: { name: 'Test', abuser_score: '0.99 (High)' }, asn: { abuser_score: '0.88 (High)' }, is_abuser: false })
+    const result = parseIpapi(IP, {
+      ip: IP,
+      company: { name: 'Test', abuser_score: '0.99 (High)' },
+      asn: { abuser_score: '0.88 (High)' },
+      is_abuser: false
+    })
     expect(result?.isAbuser).toBe(false)
     expect(JSON.stringify(result)).not.toContain('0.99')
   })
 
-  it.each([null, undefined, '', ' ', -1, 101, NaN])('does not turn invalid abuse score %s into zero', (score) => {
-    expect(parseAbuseIPDB(IP, { data: { ipAddress: IP, abuseConfidenceScore: score } })).toBeUndefined()
-  })
+  it.each([null, undefined, '', ' ', -1, 101, NaN])(
+    'does not turn invalid abuse score %s into zero',
+    (score) => {
+      expect(
+        parseAbuseIPDB(IP, { data: { ipAddress: IP, abuseConfidenceScore: score } })
+      ).toBeUndefined()
+    }
+  )
 })

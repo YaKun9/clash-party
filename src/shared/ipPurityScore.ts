@@ -75,10 +75,25 @@ export function sanitizePurityDetails(value: unknown): IpPurityDetails {
 
   const ip = purityObject(source.ipapi)
   const parsedIp: IProxyPurityProviderIpapi = {}
-  for (const key of ['isAbuser', 'isDatacenter', 'isVpn', 'isProxy', 'isTor', 'isMobile'] as const) {
+  for (const key of [
+    'isAbuser',
+    'isDatacenter',
+    'isVpn',
+    'isProxy',
+    'isTor',
+    'isMobile'
+  ] as const) {
     if (typeof ip[key] === 'boolean') parsedIp[key] = ip[key]
   }
-  for (const key of ['organization', 'company', 'networkType', 'country', 'countryCode', 'region', 'city'] as const) {
+  for (const key of [
+    'organization',
+    'company',
+    'networkType',
+    'country',
+    'countryCode',
+    'region',
+    'city'
+  ] as const) {
     const field = text(ip[key])
     if (field) parsedIp[key] = field
   }
@@ -87,7 +102,15 @@ export function sanitizePurityDetails(value: unknown): IpPurityDetails {
   if (Object.keys(parsedIp).length) result.ipapi = parsedIp
 
   const statuses = purityObject(source.sourceStatus)
-  const allowed: IpPuritySourceStatus[] = ['ok', 'unconfigured', 'timeout', 'rate_limited', 'unauthorized', 'invalid', 'error']
+  const allowed: IpPuritySourceStatus[] = [
+    'ok',
+    'unconfigured',
+    'timeout',
+    'rate_limited',
+    'unauthorized',
+    'invalid',
+    'error'
+  ]
   if (source.sourceStatus !== undefined) {
     result.sourceStatus = {}
     for (const key of IP_PURITY_SOURCES) {
@@ -109,7 +132,7 @@ export function proxycheckWeightedRisk(value: IProxyPurityProviderProxyCheck): n
   // in details and bound its contribution; other abuse signals override this.
   if (value.proxy) return Math.min(25, risk)
   if (value.vpn) return risk <= 50 ? risk * 0.3 : 15 + (risk - 50) * 1.7
-  if (value.hosting) return risk <= 33 ? risk * 10 / 33 : 10 + (risk - 33) * 90 / 67
+  if (value.hosting) return risk <= 33 ? (risk * 10) / 33 : 10 + ((risk - 33) * 90) / 67
   return risk
 }
 
@@ -153,7 +176,13 @@ export function explainPurityScore(details: IpPurityDetails): {
   const parts = valid.map((source) => {
     const effectiveWeight = IP_PURITY_WEIGHTS[source] / coverage
     const risk = risks[source]!
-    return { source, baseWeight: IP_PURITY_WEIGHTS[source], effectiveWeight, risk, deduction: effectiveWeight * risk }
+    return {
+      source,
+      baseWeight: IP_PURITY_WEIGHTS[source],
+      effectiveWeight,
+      risk,
+      deduction: effectiveWeight * risk
+    }
   })
   let floorRisk = 0
   const floorReasons: string[] = []
@@ -161,17 +190,23 @@ export function explainPurityScore(details: IpPurityDetails): {
     floorRisk = Math.max(floorRisk, risk)
     floorReasons.push(reason)
   }
-  if ((details.abuseipdb?.abuseConfidenceScore ?? 0) >= 75) floor(details.abuseipdb!.abuseConfidenceScore, 'abuseipdb')
+  if ((details.abuseipdb?.abuseConfidenceScore ?? 0) >= 75)
+    floor(details.abuseipdb!.abuseConfidenceScore, 'abuseipdb')
   if (details.proxycheck?.compromised) floor(90, 'compromised')
   if (details.ipapi?.isAbuser) floor(60, 'ipapi')
   if ((details.scamalytics?.score ?? 0) >= 90) floor(75, 'scamalytics')
   const weightedRisk = parts.reduce((sum, part) => sum + part.deduction, 0)
   return {
-    score: coverage ? Math.round(100 - Math.min(100, Math.max(0, weightedRisk, floorRisk))) : undefined,
+    score: coverage
+      ? Math.round(100 - Math.min(100, Math.max(0, weightedRisk, floorRisk)))
+      : undefined,
     parts,
     coverage,
     floorRisk,
     floorReasons,
-    disagreement: parts.length > 1 && Math.max(...parts.map((part) => part.risk)) - Math.min(...parts.map((part) => part.risk)) >= 50
+    disagreement:
+      parts.length > 1 &&
+      Math.max(...parts.map((part) => part.risk)) - Math.min(...parts.map((part) => part.risk)) >=
+        50
   }
 }
