@@ -26,6 +26,7 @@ import {
   MdCheck,
   MdDoubleArrow,
   MdFilterAlt,
+  MdOutlineSecurity,
   MdOutlineSpeed,
   MdVisibilityOff
 } from 'react-icons/md'
@@ -34,6 +35,7 @@ import { GroupedVirtuoso, GroupedVirtuosoHandle } from 'react-virtuoso'
 import ProxyItem from '@renderer/components/proxies/proxy-item'
 import { IoIosArrowBack } from 'react-icons/io'
 import { useGroups } from '@renderer/hooks/use-groups'
+import { useProxyPurity } from '@renderer/hooks/use-proxy-purity'
 import CollapseInput from '@renderer/components/base/collapse-input'
 import { includesIgnoreCase } from '@renderer/utils/includes'
 import { useControledMihomoConfig } from '@renderer/hooks/use-controled-mihomo-config'
@@ -154,7 +156,8 @@ const Proxies: React.FC = () => {
     proxyDisplayOrder = 'default',
     autoCloseConnection = true,
     proxyCols = 'auto',
-    delayTestConcurrency = 50
+    delayTestConcurrency = 50,
+    ipPurityEnabled = true
   } = appConfig || {}
 
   const [cols, setCols] = useState(1)
@@ -163,6 +166,7 @@ const Proxies: React.FC = () => {
     Array.from({ length: groups.length }, () => new Set<string>())
   )
   const [searchValue, setSearchValue] = useState(Array(groups.length).fill(''))
+  const { purityResults, purityChecking, onProxyPurity, onProxiesPurity } = useProxyPurity()
 
   // searchValue 初始化
   useEffect(() => {
@@ -259,6 +263,15 @@ const Proxies: React.FC = () => {
       return await mihomoProxyDelay(proxy.name, url, getProviderName(proxy))
     },
     []
+  )
+
+  const onGroupPurity = useCallback(
+    async (index: number): Promise<void> => {
+      const proxies = groups[index]?.all ?? []
+      // Queue all nodes; the main process limits concurrency across every group.
+      await onProxiesPurity(proxies)
+    },
+    [groups, onProxiesPurity]
   )
 
   // 组测速时逐节点写回会造成 O(N²) 分配与 N 次 allProxies 重算
@@ -555,6 +568,22 @@ const Proxies: React.FC = () => {
                     >
                       <FaLocationCrosshairs className="text-lg text-foreground-500" />
                     </Button>
+                    {ipPurityEnabled && (
+                      <Button
+                        title={t('proxies.purity.checkGroup')}
+                        variant="light"
+                        isLoading={(groups[index]?.all ?? []).some((proxy) =>
+                          purityChecking.has(proxy.name)
+                        )}
+                        size="sm"
+                        isIconOnly
+                        onPress={() => {
+                          void onGroupPurity(index)
+                        }}
+                      >
+                        <MdOutlineSecurity className="text-lg text-foreground-500" />
+                      </Button>
+                    )}
                     <Button
                       title={t('proxies.delay.test')}
                       variant="light"
@@ -593,7 +622,10 @@ const Proxies: React.FC = () => {
       allProxies,
       cols,
       virtuosoRef,
-      onGroupDelay
+      onGroupDelay,
+      onGroupPurity,
+      purityChecking,
+      ipPurityEnabled
     ]
   )
 
@@ -630,6 +662,17 @@ const Proxies: React.FC = () => {
                   delaying[groupIndex]?.has(allProxies[groupIndex][innerIndex * cols + i].name) ??
                   false
                 }
+                purity={purityResults[allProxies[groupIndex][innerIndex * cols + i].name]}
+                purityChecking={purityChecking.has(
+                  allProxies[groupIndex][innerIndex * cols + i].name
+                )}
+                onPurity={
+                  ipPurityEnabled
+                    ? (proxy) => {
+                        void onProxyPurity(proxy)
+                      }
+                    : undefined
+                }
               />
             )
           })}
@@ -648,7 +691,11 @@ const Proxies: React.FC = () => {
       delaying,
       mutate,
       onProxyDelay,
-      onChangeProxy
+      onChangeProxy,
+      purityResults,
+      purityChecking,
+      onProxyPurity,
+      ipPurityEnabled
     ]
   )
 

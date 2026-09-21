@@ -1,5 +1,7 @@
-import { Button, Card, CardBody } from '@heroui/react'
+import { Button, Card, CardBody, Tooltip } from '@heroui/react'
+import PurityDetails from './purity-details'
 import { mihomoUnfixedProxy } from '@renderer/utils/ipc'
+import type { ProxyPurityDisplayResult } from '@renderer/utils/ip-purity'
 import React, { useMemo, useState, useCallback } from 'react'
 import { FaMapPin } from 'react-icons/fa6'
 import { useTranslation } from 'react-i18next'
@@ -14,7 +16,13 @@ interface Props {
   onSelect: (group: string, proxy: string) => void
   selected: boolean
   isGroupTesting?: boolean
+  purity?: ProxyPurityDisplayResult
+  purityChecking?: boolean
+  onPurity?: (proxy: IMihomoProxy | IMihomoGroup) => void
 }
+
+// Keep both metrics equally readable and prevent narrow cards from shrinking them.
+const METRIC_BUTTON_CLASS = 'h-6 min-w-0 shrink-0 px-2 text-sm font-normal tabular-nums'
 
 function delayColor(delay: number): 'primary' | 'success' | 'warning' | 'danger' {
   if (delay === -1) return 'primary'
@@ -33,7 +41,10 @@ const ProxyItemBase: React.FC<Props> = (props) => {
     selected,
     onSelect,
     onProxyDelay,
-    isGroupTesting = false
+    isGroupTesting = false,
+    purity,
+    purityChecking = false,
+    onPurity
   } = props
 
   const delay = useMemo(() => {
@@ -62,6 +73,84 @@ const ProxyItemBase: React.FC<Props> = (props) => {
   }, [proxy, group.testUrl, onProxyDelay, mutateProxies])
 
   const fixed = useMemo(() => group.fixed && group.fixed === proxy.name, [group.fixed, proxy.name])
+
+  const purityColor = useMemo((): 'primary' | 'success' | 'warning' | 'danger' => {
+    if (purity === 'timeout') return 'danger'
+    if (!purity) return 'primary'
+    if (purity.score >= 85) return 'success'
+    if (purity.score >= 65) return 'warning'
+    return 'danger'
+  }, [purity])
+
+  const purityText = useMemo(() => {
+    if (purity === 'timeout') return t('proxies.delay.timeout')
+    return purity ? `${t('proxies.purity.short')}${purity.score}` : t('proxies.purity.check')
+  }, [purity, t])
+
+  const purityButton =
+    onPurity && !('all' in proxy) ? (
+      <Tooltip
+        delay={250}
+        closeDelay={180}
+        offset={10}
+        placement="top"
+        classNames={{ content: 'p-0 rounded-2xl border border-divider bg-content1 shadow-2xl' }}
+        content={
+          purity && purity !== 'timeout' ? (
+            <PurityDetails result={purity} />
+          ) : (
+            <div className="p-3 text-sm">
+              {purity === 'timeout' ? `${t('proxies.delay.timeout')} · ` : ''}
+              {t('proxies.purity.clickToCheck')}
+            </div>
+          )
+        }
+      >
+        <Button
+          size="sm"
+          variant="light"
+          color={purityColor}
+          isLoading={purityChecking}
+          isDisabled={purityChecking}
+          aria-label={`${t('proxies.purity.score')}: ${purityText}`}
+          onPress={() => onPurity(proxy)}
+          className={METRIC_BUTTON_CLASS}
+          data-metric="purity"
+        >
+          {purityText}
+        </Button>
+      </Tooltip>
+    ) : null
+
+  const delayButton = (
+    <Button
+      size="sm"
+      title={proxy.type}
+      aria-label={`${t('proxies.delay.test')}: ${delayText}`}
+      isLoading={isLoading}
+      isDisabled={isLoading}
+      color={delayColor(delay)}
+      onPress={onDelay}
+      variant="light"
+      className={METRIC_BUTTON_CLASS}
+      data-metric="delay"
+    >
+      {delayText}
+    </Button>
+  )
+
+  const metrics = (
+    <div
+      className="ml-auto flex shrink-0 items-center"
+      data-proxy-metrics
+      onClick={(event) => event.stopPropagation()}
+      onPointerDown={(event) => event.stopPropagation()}
+      onKeyDown={(event) => event.stopPropagation()}
+    >
+      {purityButton}
+      {delayButton}
+    </div>
+  )
 
   return (
     <Card
@@ -104,9 +193,9 @@ const ProxyItemBase: React.FC<Props> = (props) => {
                 </Button>
               )}
             </div>
-            <div className="flex justify-between items-center pl-1">
-              <div className="flex gap-1 items-center">
-                <div className="text-foreground-400 text-xs bg-default-100 px-1 rounded-md">
+            <div className="flex items-center gap-1 pl-1">
+              <div className="flex min-w-0 flex-1 gap-1 items-center overflow-hidden">
+                <div className="shrink-0 text-foreground-400 text-xs bg-default-100 px-1 rounded-md">
                   {proxy.type}
                 </div>
                 {['tfo', 'udp', 'xudp', 'mptcp', 'smux'].map(
@@ -114,34 +203,24 @@ const ProxyItemBase: React.FC<Props> = (props) => {
                     proxy[protocol as keyof IMihomoProxy] && (
                       <div
                         key={protocol}
-                        className="text-foreground-400 text-xs bg-default-100 px-1 rounded-md"
+                        className="shrink-0 text-foreground-400 text-xs bg-default-100 px-1 rounded-md"
                       >
                         {protocol}
                       </div>
                     )
                 )}
               </div>
-              <Button
-                isIconOnly
-                title={proxy.type}
-                isLoading={isLoading}
-                color={delayColor(delay)}
-                onPress={onDelay}
-                variant="light"
-                className="h-full text-sm ml-auto -mt-0.5 px-2 relative w-min whitespace-nowrap"
-              >
-                <div className="w-full h-full flex items-center justify-end">{delayText}</div>
-              </Button>
+              {metrics}
             </div>
           </div>
         ) : (
           <div className="flex justify-between items-center pl-1">
-            <div className="text-ellipsis overflow-hidden whitespace-nowrap">
+            <div className="min-w-0 text-ellipsis overflow-hidden whitespace-nowrap">
               <div className="flag-emoji inline" title={proxy.name}>
                 {proxy.name}
               </div>
             </div>
-            <div className="flex justify-end">
+            <div className="flex shrink-0 justify-end items-center gap-1">
               {fixed && (
                 <Button
                   isIconOnly
@@ -157,17 +236,7 @@ const ProxyItemBase: React.FC<Props> = (props) => {
                   <FaMapPin className="text-md le" />
                 </Button>
               )}
-              <Button
-                isIconOnly
-                title={proxy.type}
-                isLoading={isLoading}
-                color={delayColor(delay)}
-                onPress={onDelay}
-                variant="light"
-                className="h-full text-sm px-2 relative w-min whitespace-nowrap"
-              >
-                <div className="w-full h-full flex items-center justify-end">{delayText}</div>
-              </Button>
+              {metrics}
             </div>
           </div>
         )}
@@ -184,7 +253,10 @@ const ProxyItem = React.memo(ProxyItemBase, (prevProps, nextProps) => {
     prevProps.selected === nextProps.selected &&
     prevProps.proxyDisplayMode === nextProps.proxyDisplayMode &&
     prevProps.group.fixed === nextProps.group.fixed &&
-    prevProps.isGroupTesting === nextProps.isGroupTesting
+    prevProps.isGroupTesting === nextProps.isGroupTesting &&
+    prevProps.purity === nextProps.purity &&
+    prevProps.purityChecking === nextProps.purityChecking &&
+    prevProps.onPurity === nextProps.onPurity
   )
 })
 

@@ -5,9 +5,11 @@ import { useAppConfig } from '@renderer/hooks/use-app-config'
 import { useProfileConfig } from '@renderer/hooks/use-profile-config'
 import debounce from '@renderer/utils/debounce'
 import {
+  clearProxyPurityCache,
   exportGistAgeSecretKey,
   generateGistAgeKeyPair,
   getGistUrl,
+  mihomoHotReloadConfig,
   restartCore
 } from '@renderer/utils/ipc'
 import { MdDeleteForever } from 'react-icons/md'
@@ -17,6 +19,7 @@ import { platform, version } from '@renderer/utils/init'
 import { useTranslation } from 'react-i18next'
 import SettingItem from '../base/base-setting-item'
 import SettingCard from '../base/base-setting-card'
+import PurityProviderSettings from './purity-provider-settings'
 
 interface SsidProfileEntry {
   ssid: string
@@ -34,6 +37,11 @@ const MihomoConfig: React.FC = () => {
     hotReloadProfileAutoCloseConnection = false,
     delayTestConcurrency,
     delayTestTimeout,
+    ipPurityEnabled = true,
+    ipPurityProxycheckApiKey = '',
+    ipPurityScamalyticsEndpoint = '',
+    ipPurityScamalyticsApiKey = '',
+    ipPurityCacheHours = 24,
     githubToken = '',
     gistAgeEncrypt = false,
     gistAgeRecipient = '',
@@ -52,6 +60,11 @@ const MihomoConfig: React.FC = () => {
     ssidProfileRestore = false
   } = appConfig || {}
   const [url, setUrl] = useState(delayTestUrl)
+  const [purityProxycheckKey, setPurityProxycheckKey] = useState(ipPurityProxycheckApiKey)
+  const [purityScamalyticsEndpoint, setPurityScamalyticsEndpoint] = useState(
+    ipPurityScamalyticsEndpoint
+  )
+  const [purityScamalyticsKey, setPurityScamalyticsKey] = useState(ipPurityScamalyticsApiKey)
   const [pauseSSIDInput, setPauseSSIDInput] = useState(pauseSSID)
   const [ssidProfileEntriesInput, setSsidProfileEntriesInput] = useState<SsidProfileEntry[]>(() =>
     Object.entries(ssidProfileMap).map(([ssid, profileId]) => ({
@@ -61,6 +74,15 @@ const MihomoConfig: React.FC = () => {
   )
   const setUrlDebounce = debounce((v: string) => {
     patchAppConfig({ delayTestUrl: v })
+  }, 500)
+  const setPurityProxycheckKeyDebounce = debounce((v: string) => {
+    patchAppConfig({ ipPurityProxycheckApiKey: v.trim() })
+  }, 500)
+  const setPurityScamalyticsEndpointDebounce = debounce((v: string) => {
+    patchAppConfig({ ipPurityScamalyticsEndpoint: v.trim() })
+  }, 500)
+  const setPurityScamalyticsKeyDebounce = debounce((v: string) => {
+    patchAppConfig({ ipPurityScamalyticsApiKey: v.trim() })
   }, 500)
   const [ua, setUa] = useState(userAgent)
   const setUaDebounce = debounce((v: string) => {
@@ -175,6 +197,88 @@ const MihomoConfig: React.FC = () => {
             setUrlDebounce(v)
           }}
         ></Input>
+      </SettingItem>
+      <SettingItem title={t('mihomo.ipPurity.enabled')} divider>
+        <Switch
+          size="sm"
+          isSelected={ipPurityEnabled}
+          onValueChange={async (value) => {
+            try {
+              await patchAppConfig({ ipPurityEnabled: value })
+              await clearProxyPurityCache()
+              await mihomoHotReloadConfig()
+            } catch (error) {
+              toast.error(String(error))
+            }
+          }}
+        />
+      </SettingItem>
+      <SettingItem title={t('mihomo.ipPurity.proxycheckKey')} divider>
+        <Input
+          size="sm"
+          className="w-[60%]"
+          type="password"
+          value={purityProxycheckKey}
+          placeholder={t('mihomo.ipPurity.proxycheckKeyPlaceholder')}
+          onValueChange={(v) => {
+            setPurityProxycheckKey(v)
+            setPurityProxycheckKeyDebounce(v)
+          }}
+        />
+      </SettingItem>
+      <PurityProviderSettings />
+      <SettingItem title={t('mihomo.ipPurity.scamalyticsEndpoint')} divider>
+        <Input
+          size="sm"
+          className="w-[60%]"
+          value={purityScamalyticsEndpoint}
+          placeholder={t('mihomo.ipPurity.scamalyticsEndpointPlaceholder')}
+          onValueChange={(v) => {
+            setPurityScamalyticsEndpoint(v)
+            setPurityScamalyticsEndpointDebounce(v)
+          }}
+        />
+      </SettingItem>
+      <SettingItem title={t('mihomo.ipPurity.scamalyticsKey')} divider>
+        <Input
+          size="sm"
+          className="w-[60%]"
+          type="password"
+          value={purityScamalyticsKey}
+          placeholder={t('mihomo.ipPurity.scamalyticsKeyPlaceholder')}
+          onValueChange={(v) => {
+            setPurityScamalyticsKey(v)
+            setPurityScamalyticsKeyDebounce(v)
+          }}
+        />
+      </SettingItem>
+      <SettingItem title={t('mihomo.ipPurity.cacheHours')} divider>
+        <div className="flex items-center gap-2">
+          <Input
+            size="sm"
+            className="w-25"
+            type="number"
+            min={0.25}
+            max={168}
+            value={ipPurityCacheHours.toString()}
+            onValueChange={(v) => {
+              const value = Number(v)
+              if (!Number.isFinite(value)) return
+              void patchAppConfig({ ipPurityCacheHours: Math.max(0.25, Math.min(168, value)) })
+            }}
+          />
+          <span className="text-default-500">{t('mihomo.ipPurity.hours')}</span>
+          <Button
+            size="sm"
+            variant="flat"
+            onPress={async () => {
+              await clearProxyPurityCache()
+              toast.success(t('mihomo.ipPurity.cacheCleared'))
+            }}
+          >
+            {t('mihomo.ipPurity.clearCache')}
+          </Button>
+        </div>
       </SettingItem>
       <SettingItem title={t('mihomo.delayTest.concurrency')} divider>
         <Input
