@@ -1,0 +1,352 @@
+name: Build and Release IP Purity Beta 4
+
+on:
+  push:
+    branches: [feature/ip-purity]
+    paths: ['.github/workflows/build-release-ip-purity-beta4.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ip-purity-beta-4-release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.repository == 'YaKun9/clash-party' && github.ref == 'refs/heads/feature/ip-purity'
+    name: Build ${{ matrix.platform }} ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows
+            os: windows-latest
+            arch: x64
+          - platform: macos
+            os: macos-14
+            arch: arm64
+          - platform: ubuntu
+            os: ubuntu-24.04
+            arch: x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    env:
+      npm_config_arch: ${{ matrix.arch }}
+      npm_config_target_arch: ${{ matrix.arch }}
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Prepare pinned emoji resource
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import { mkdirSync, writeFileSync } from 'node:fs'
+          import { dirname } from 'node:path'
+          import { createHash } from 'node:crypto'
+          const target = 'src/renderer/src/assets/NotoColorEmoji.ttf'
+          const sources = [
+            'https://raw.githubusercontent.com/googlefonts/noto-emoji/v2.051/fonts/NotoColorEmoji.ttf',
+            'https://cdn.jsdelivr.net/gh/googlefonts/noto-emoji@v2.051/fonts/NotoColorEmoji.ttf'
+          ]
+          let downloaded = false
+          for (const url of sources) {
+            try {
+              const response = await fetch(url, { signal: AbortSignal.timeout(30000) })
+              if (!response.ok) throw new Error(`HTTP ${response.status}`)
+              const bytes = Buffer.from(await response.arrayBuffer())
+              if (createHash('sha256').update(bytes).digest('hex') !== '72a635cb3d2f3524c51620cdde406b217204e8a6a06c6a096ff8ed4b5fd6e27b') throw new Error('Resource checksum mismatch')
+              mkdirSync(dirname(target), { recursive: true })
+              writeFileSync(target, bytes)
+              downloaded = true
+              break
+            } catch (error) { console.warn(error.message) }
+          }
+          if (!downloaded) throw new Error('All pinned resource sources failed')
+          NODE
+      - name: Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libarchive-tools
+      - name: Dependencies and runtime resources
+        run: pnpm install --frozen-lockfile
+      - name: Validate source on each platform
+        run: |
+          pnpm run format:check
+          pnpm run lint:check
+          pnpm run typecheck
+          pnpm test
+      - name: Configure Beta 4 packages
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync, writeFileSync } from 'node:fs'
+          import { parse, stringify } from 'yaml'
+          const pkg = JSON.parse(readFileSync('package.json', 'utf8'))
+          pkg.version = '2.0.3-ip-purity.beta.4'
+          writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n')
+          const config = parse(readFileSync('electron-builder.yml', 'utf8'))
+          if (process.platform === 'darwin') {
+            if (process.arch !== 'arm64') throw new Error('ARM64 runner required')
+            config.mac.target = ['pkg']
+            config.mac.identity = '-'
+            config.mac.entitlements = 'build/entitlements.mac.plist'
+            config.mac.entitlementsInherit = 'build/entitlements.mac.plist'
+            config.mac.notarize = false
+            config.pkg.identity = null
+          }
+          if (process.platform === 'linux') {
+            config.productName = 'clash-party'
+            config.linux.target = ['deb']
+          }
+          writeFileSync('electron-builder.beta4.yml', stringify(config))
+          NODE
+      - name: Build Windows
+        if: runner.os == 'Windows'
+        run: |
+          pnpm exec electron-vite build
+          pnpm exec electron-builder --publish never --win --x64 --config electron-builder.beta4.yml
+          New-Item -Path 'PORTABLE' -ItemType File -Force
+          $archives = @(Get-ChildItem 'dist/*portable.7z')
+          if ($archives.Count -ne 1) { throw 'Expected one portable archive' }
+          7z a $archives[0].FullName PORTABLE
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to add portable mode flag' }
+      - name: Build macOS ARM64
+        if: runner.os == 'macOS'
+        run: |
+          chmod +x build/pkg-scripts/postinstall build/pkg-scripts/preinstall
+          pnpm exec electron-vite build
+          pnpm exec electron-builder --publish never --mac pkg --arm64 --config electron-builder.beta4.yml
+          app=$(find dist -maxdepth 2 -name '*.app' -type d | head -1)
+          test -n "$app"
+          file "$app/Contents/MacOS/Clash Party" | grep arm64
+          codesign --verify --deep --strict "$app"
+      - name: Build Ubuntu AMD64
+        if: runner.os == 'Linux'
+        run: |
+          pnpm exec electron-vite build
+          pnpm exec electron-builder --publish never --linux deb --x64 --config electron-builder.beta4.yml
+          package=$(find dist -maxdepth 1 -name '*.deb' | head -1)
+          test -n "$package"
+          test "$(dpkg-deb -f "$package" Architecture)" = amd64
+          dpkg-deb -I "$package"
+      - name: Render hover-card fixtures with actual compiled styles
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          cat > .purity-preview.tsx <<'TSX'
+          import React from 'react'
+          import { renderToStaticMarkup } from 'react-dom/server'
+          import { createInstance } from 'i18next'
+          import { I18nextProvider } from 'react-i18next'
+          import { readFileSync, readdirSync, writeFileSync, mkdirSync } from 'node:fs'
+          import PurityDetails from './src/renderer/src/components/proxies/purity-details'
+          import { explainPurityScore } from './src/shared/ipPurityScore'
+          const i18n = createInstance()
+          await i18n.init({ lng: 'zh-CN', keySeparator: false, resources: { 'zh-CN': { translation: JSON.parse(readFileSync('src/renderer/src/locales/zh-CN.json', 'utf8')) } } })
+          const css = readdirSync('out/renderer/assets').filter(name => name.endsWith('.css')).map(name => readFileSync(`out/renderer/assets/${name}`, 'utf8')).join('\n')
+          const base = { proxy: '演示节点 · 非真实检测数据', ip: '203.0.113.10', checkedAt: Date.now(),
+            proxycheck: { riskScore: 50, vpn: true, proxy: false, tor: false, hosting: true, compromised: false, provider: 'Example Network', country: '示例地区' },
+            abuseipdb: { abuseConfidenceScore: 0, totalReports: 0, numDistinctUsers: 0, maxAgeInDays: 90 },
+            ipapi: { isAbuser: false, isVpn: true, isProxy: false, isTor: false, isDatacenter: true, asn: 64500, organization: 'Example Network', networkType: 'hosting', country: '示例地区', city: '示例城市' },
+            sourceStatus: { abuseipdb: 'ok', ipapi: 'ok', proxycheck: 'ok', scamalytics: 'unconfigured' }
+          }
+          const fixtures = [
+            ['normal', base],
+            ['limited', { proxy: base.proxy, ip: base.ip, checkedAt: base.checkedAt, proxycheck: { riskScore: 100, proxy: true }, sourceStatus: { proxycheck: 'ok', abuseipdb: 'unauthorized', ipapi: 'rate_limited', scamalytics: 'unconfigured' } }],
+            ['severe', { ...base, abuseipdb: { abuseConfidenceScore: 95, totalReports: 42, numDistinctUsers: 12, maxAgeInDays: 90, lastReportedAt: new Date().toISOString() } }]
+          ] as const
+          mkdirSync('ui-preview')
+          for (const [name, details] of fixtures) {
+            const result = { ...details, score: explainPurityScore(details).score! }
+            const markup = renderToStaticMarkup(<I18nextProvider i18n={i18n}><PurityDetails result={result} /></I18nextProvider>)
+            if (!markup.includes('AbuseIPDB') || !markup.includes('ipapi.is') || !markup.includes('实验性评分')) throw new Error('Incomplete hover-card render')
+            for (const theme of ['light', 'dark']) {
+              writeFileSync(`ui-preview/${name}-${theme}.html`, `<!doctype html><html lang="zh-CN" class="${theme}"><meta charset="utf-8"><style>${css}</style><body class="bg-background text-foreground" style="margin:0;padding:24px;font-family:Arial,'Noto Sans CJK SC',sans-serif"><div style="width:max-content" class="overflow-hidden rounded-2xl border border-divider bg-content1 shadow-xl">${markup}</div></body></html>`)
+            }
+          }
+          TSX
+          pnpm exec tsx .purity-preview.tsx
+      - uses: actions/upload-artifact@v6
+        if: runner.os == 'Linux'
+        with:
+          name: ip-purity-beta4-ui-preview
+          path: ui-preview/*.html
+          if-no-files-found: error
+          retention-days: 7
+      - name: Stage and hash packages
+        shell: bash
+        env:
+          TARGET_PLATFORM: ${{ matrix.platform }}
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { readdirSync, mkdirSync, readFileSync, writeFileSync, copyFileSync } from 'node:fs'
+          import { createHash } from 'node:crypto'
+          const platform = process.env.TARGET_PLATFORM
+          const arch = process.env.TARGET_ARCH
+          const packageArch = platform === 'ubuntu' ? 'amd64' : arch
+          const files = readdirSync('dist').filter(name => /(?:setup\.exe|portable\.7z|\.pkg|\.deb)$/.test(name))
+          if (files.length !== (platform === 'windows' ? 2 : 1)) throw new Error('Unexpected package count')
+          mkdirSync('release-assets')
+          for (const name of files) {
+            if (!name.includes('2.0.3-ip-purity.beta.4') || !name.includes(packageArch)) throw new Error(`Unexpected package: ${name}`)
+            const sum = createHash('sha256').update(readFileSync(`dist/${name}`)).digest('hex')
+            copyFileSync(`dist/${name}`, `release-assets/${name}`)
+            writeFileSync(`release-assets/${name}.sha256`, sum + '\n')
+          }
+          writeFileSync(`release-assets/BUILD-INFO-${platform}-${arch}.txt`, [
+            `Source: ${process.env.GITHUB_SHA}`,
+            `Run: ${process.env.GITHUB_RUN_ID}`,
+            `Platform: ${platform}; architecture: ${packageArch}`,
+            'Version: 2.0.3-ip-purity.beta.4; scoring: weighted-risk-v2; concurrency: 3',
+            'Rich hover details; AbuseIPDB and ipapi.is; IP-keyed persistent cache and explicit refresh.',
+            'Experimental fork. macOS: ad-hoc app signature, unsigned installer, not notarized.'
+          ].join('\n') + '\n')
+          NODE
+      - uses: actions/upload-artifact@v6
+        with:
+          name: ip-purity-beta4-${{ matrix.platform }}-${{ matrix.arch }}
+          path: release-assets/*
+          retention-days: 14
+          if-no-files-found: error
+          compression-level: 0
+
+  publish:
+    name: Publish verified Beta 4
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Verify artifacts and publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, re, shutil, subprocess
+          repo = os.environ['GITHUB_REPOSITORY']
+          source = os.environ['GITHUB_SHA']
+          run_id = os.environ['GITHUB_RUN_ID']
+          tag = 'ip-purity-v2.0.3-beta.4'
+          if repo != 'YaKun9/clash-party' or os.environ['GITHUB_REF'] != 'refs/heads/feature/ip-purity':
+              raise RuntimeError('Unexpected release source')
+          def api(path, method=None, data=None):
+              command = ['gh', 'api', path]
+              if method:
+                  command += ['--method', method]
+              if data is not None:
+                  command += ['--input', '-']
+              result = subprocess.run(command, input=json.dumps(data) if data is not None else None, text=True, capture_output=True, check=True)
+              return json.loads(result.stdout)
+          names = ['ip-purity-beta4-windows-x64', 'ip-purity-beta4-macos-arm64', 'ip-purity-beta4-ubuntu-x64']
+          artifacts = api(f'repos/{repo}/actions/runs/{run_id}/artifacts?per_page=100')['artifacts']
+          for name in names:
+              matches = [a for a in artifacts if a['name'] == name and not a['expired']]
+              if len(matches) != 1 or matches[0]['workflow_run']['head_sha'] != source:
+                  raise RuntimeError(f'Unexpected build artifact: {name}')
+          command = ['gh', 'run', 'download', run_id, '--repo', repo, '--dir', 'downloaded']
+          for name in names:
+              command += ['--name', name]
+          subprocess.run(command, check=True)
+          staging = pathlib.Path('release-assets')
+          staging.mkdir()
+          for path in pathlib.Path('downloaded').rglob('*'):
+              if not path.is_file():
+                  continue
+              if path.is_symlink() or not re.fullmatch(r'[A-Za-z0-9._-]+', path.name) or (staging / path.name).exists():
+                  raise RuntimeError('Unexpected or duplicate artifact path')
+              shutil.copyfile(path, staging / path.name)
+          def digest(path):
+              with path.open('rb') as stream:
+                  return hashlib.file_digest(stream, 'sha256').hexdigest()
+          packages = [p for p in staging.iterdir() if p.name.endswith(('.exe', '.7z', '.pkg', '.deb'))]
+          if len(packages) != 4 or {p.suffix for p in packages} != {'.exe', '.7z', '.pkg', '.deb'}:
+              raise RuntimeError('Incomplete platform packages')
+          for path in packages:
+              if digest(path) != pathlib.Path(str(path) + '.sha256').read_text().strip():
+                  raise RuntimeError(f'Checksum mismatch: {path.name}')
+          infos = list(staging.glob('BUILD-INFO-*.txt'))
+          if len(infos) != 3 or any(source not in p.read_text() for p in infos):
+              raise RuntimeError('Build provenance mismatch')
+          notes = f'''## IP 纯净度 Beta 4：详情卡 / 多源检测 / 权重评分
+
+          ### 界面与服务
+          - 重做悬浮详情卡：大字号综合分、出口 IP、位置/ASN/网络类型、各来源原始结果、实际计分权重和扣分、最近检测时间。
+          - 新增 AbuseIPDB：只读检查最近 90 天的举报数据，显示滥用置信分、举报次数、举报者数量和最后举报时间。
+          - 新增 ipapi.is：显示滥用、VPN、Proxy、Tor、机房等标记，以及运营商和地理信息。不把 ASN/公司级滥用比例当成单个 IP 的分数。
+          - 两个新增服务需要在设置中填写各自 API Key；留空不请求。Scamalytics 仍为可选项，无需为它等待审核才能使用其他来源。
+          - 显示每个来源未配置、超时、凭据被拒、额度/频率受限或无有效数据状态。一家失败不影响其他有效结果。
+
+          ### 新评分规则（客户端经验模型，不是安全概率）
+          - 基础权重：AbuseIPDB 40、Scamalytics 25、proxycheck.io 20、ipapi.is 15。仅对有有效评分信号的来源重新归一化；未知/失败不记为零风险。
+          - proxycheck.io 的 VPN 基础风险 50 折算为 15；Proxy 单纯标记的风险最多按 25；Hosting 基础风险 33 折算为 10。原始分始终保留展示。
+          - 因此只有 VPN 原分 50 时为净85；只有 Proxy 原分100时为净75，不再仅因这些标签直接净0。
+          - ipapi.is 的布尔属性转换为本地信号分（不是服务商欺诈分）：滥用80、Tor60、Proxy25、VPN15、机房10；未知数据不伪造零分。
+          - 严重风险设下限保护：AbuseIPDB >=75 时采用其原分作为最低风险；Compromised 最低90；ipapi 滥用最低60；Scamalytics >=90 最低75。其他低分不能平均掩盖这些信号。
+          - 综合分 = 四舍五入(100 - max(加权风险, 严重信号最低风险))。卡片解释每个来源的实际权重和扣分；覆盖权重不等于准确率。
+
+          ### 缓存与配置
+          - 保留3个独立并发、按出口IP去重、本地24/48小时缓存、重启恢复、主动检测刷新。
+          - 评分模型及API配置加入缓存指纹，旧模型的分数不直接套用新规则。升级/填写新Key后主动检测一次。
+          - API Key 保存于 config.yaml，随现有WebDAV备份；备份ZIP未额外加密。检测缓存仅保存在本机，不存API凭据。
+
+          ### 下载与限制
+          - Windows x64：setup.exe安装版 / portable.7z便携版。
+          - macOS苹果芯片：arm64.pkg，ad-hoc应用签名；安装包未Developer ID签名、未Apple公证。
+          - Ubuntu24.04（R720等Intel/AMD64电脑）：amd64.deb，使用 sudo apt install ./对应文件.deb。
+          - 三平台均执行代码检查和测试后打包；新增服务以模拟接口验证，仍需用户真实API Key及设备联调，不承诺数据库判断绝对准确。
+          - 这是个人fork测试版，未合并smart_core，未覆盖旧Release。
+
+          源码：`{source}`。[构建与检查记录](https://github.com/{repo}/actions/runs/{run_id})。安装包附SHA-256校验文件。
+          '''
+          matches = [r for r in api(f'repos/{repo}/releases?per_page=100') if r['tag_name'] == tag]
+          if matches:
+              release = matches[0]
+              if not release['draft'] or release['target_commitish'] != source:
+                  raise RuntimeError('Refusing to overwrite an existing release')
+          else:
+              release = api(f'repos/{repo}/releases', 'POST', {
+                  'tag_name': tag, 'target_commitish': source,
+                  'name': 'Clash Party IP 纯净度 Beta 4：详情卡 / 多源检测 / 权重评分',
+                  'body': notes, 'draft': True, 'prerelease': True, 'make_latest': 'false'
+              })
+          release_id = release['id']
+          uploaded = {a['name']: a for a in api(f'repos/{repo}/releases/{release_id}')['assets']}
+          for path in sorted(staging.iterdir()):
+              if path.name in uploaded:
+                  if uploaded[path.name].get('digest') != 'sha256:' + digest(path):
+                      raise RuntimeError('Existing draft asset differs')
+                  continue
+              subprocess.run(['gh', 'api', '--method', 'POST',
+                  f'https://uploads.github.com/repos/{repo}/releases/{release_id}/assets?name={path.name}',
+                  '-H', 'Content-Type: application/octet-stream', '--input', str(path)], check=True, stdout=subprocess.DEVNULL)
+          uploaded = api(f'repos/{repo}/releases/{release_id}')['assets']
+          if {a['name'] for a in uploaded} != {p.name for p in staging.iterdir()}:
+              raise RuntimeError('Incomplete release assets')
+          for asset in uploaded:
+              path = staging / asset['name']
+              if asset['state'] != 'uploaded' or asset['size'] != path.stat().st_size or asset.get('digest') != 'sha256:' + digest(path):
+                  raise RuntimeError('Uploaded asset verification failed')
+          release = api(f'repos/{repo}/releases/{release_id}', 'PATCH', {
+              'draft': False, 'prerelease': True, 'make_latest': 'false', 'body': notes
+          })
+          if release['draft']:
+              raise RuntimeError('Release was not published')
+          print(release['html_url'])
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              summary.write(f"## Published Beta 4\n\n{release['html_url']}\n")
+          PY
